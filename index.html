@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Simulateur D&D - V2</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; max-width: 1000px; margin: 2rem auto; background: #1a1a1a; color: #eee; }
+        h1, h2 { text-align: center; color: #e63946; }
+        .container { display: flex; gap: 20px; justify-content: space-between; }
+        .card { background: #2d2d2d; padding: 20px; border-radius: 10px; flex: 1; border: 1px solid #444; }
+        .vs { align-self: center; font-size: 2rem; font-weight: bold; color: #e63946; }
+        label { display: block; margin-top: 10px; font-size: 0.9rem; color: #aaa; }
+        input { width: 100%; padding: 8px; background: #444; border: 1px solid #555; color: white; border-radius: 4px; box-sizing: border-box; }
+        
+        .actions { margin-top: 30px; text-align: center; }
+        button { background: #e63946; color: white; border: none; padding: 15px 40px; font-size: 1.2rem; cursor: pointer; border-radius: 5px; transition: 0.3s; }
+        button:hover { background: #ff4d5a; transform: scale(1.05); }
+        
+        #resultat { margin-top: 30px; padding: 20px; background: #222; border-top: 4px solid #e63946; display: none; }
+        .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; text-align: center; margin-top: 20px; }
+        .metric-val { font-size: 2rem; font-weight: bold; color: #4cc9f0; }
+        .metric-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; }
+    </style>
+</head>
+<body>
+    <h1>⚔️ Simulateur D&D</h1>
+    
+    <div class="container">
+        <!-- Colonne Joueur -->
+        <div class="card">
+            <h2>Héros (PJ)</h2>
+            <label>Points de Vie (PV)</label>
+            <input type="number" id="pj_hp" value="35">
+            <label>Classe d'Armure (CA)</label>
+            <input type="number" id="pj_ac" value="16">
+            <label>Bonus Initiative (DEX)</label>
+            <input type="number" id="pj_init" value="2">
+            <label>Bonus au Toucher (ex: +5)</label>
+            <input type="number" id="pj_hit" value="5">
+            <label>Dégâts Moyens (ex: 1d8+3 = 7.5)</label>
+            <input type="number" id="pj_dmg" value="7.5">
+        </div>
+
+        <div class="vs">VS</div>
+
+        <!-- Colonne Monstre -->
+        <div class="card">
+            <h2>Monstre</h2>
+            <label>Points de Vie (PV)</label>
+            <input type="number" id="m_hp" value="50">
+            <label>Classe d'Armure (CA)</label>
+            <input type="number" id="m_ac" value="14">
+            <label>Bonus Initiative</label>
+            <input type="number" id="m_init" value="1">
+            <label>Bonus au Toucher</label>
+            <input type="number" id="m_hit" value="4">
+            <label>Dégâts Moyens</label>
+            <input type="number" id="m_dmg" value="6">
+        </div>
+    </div>
+
+    <div class="actions">
+        <label style="display:inline; margin-right:10px;">Nombre de simulations :</label>
+        <input type="number" id="iter" value="10000" style="width: 100px; display:inline;">
+        <br><br>
+        <button onclick="lancerSimulation()">LANCER LE COMBAT</button>
+    </div>
+
+    <div id="resultat">
+        <h2>Analyse Tactique</h2>
+        <div class="stats-grid">
+            <div>
+                <div class="metric-val" id="winrate">--</div>
+                <div class="metric-label">Victoires du PJ</div>
+            </div>
+            <div>
+                <div class="metric-val" id="avg_rounds">--</div>
+                <div class="metric-label">Durée Moyenne (Rounds)</div>
+            </div>
+            <div>
+                <div class="metric-val" id="cpu_time">--</div>
+                <div class="metric-label">Temps de Calcul (s)</div>
+            </div>
+        </div>
+    </div>
+
+<script>
+        async function lancerSimulation() {
+            const btn = document.querySelector('button');
+            const resDiv = document.getElementById('resultat');
+            
+            btn.innerText = "Calcul en cours...";
+            btn.disabled = true;
+            resDiv.style.display = 'none';
+
+            const data = {
+                iterations: parseInt(document.getElementById('iter').value),
+                pj: {
+                    hp: parseInt(document.getElementById('pj_hp').value),
+                    ac: parseInt(document.getElementById('pj_ac').value),
+                    init: parseInt(document.getElementById('pj_init').value),
+                    hit_bonus: parseInt(document.getElementById('pj_hit').value),
+                    avg_dmg: parseFloat(document.getElementById('pj_dmg').value)
+                },
+                monstre: {
+                    hp: parseInt(document.getElementById('m_hp').value),
+                    ac: parseInt(document.getElementById('m_ac').value),
+                    init: parseInt(document.getElementById('m_init').value),
+                    hit_bonus: parseInt(document.getElementById('m_hit').value),
+                    avg_dmg: parseFloat(document.getElementById('m_dmg').value)
+                }
+            };
+
+            try {
+                const response = await fetch('/api/simulate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                // Si le serveur renvoie une erreur (ex: 500 ou 422)
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(JSON.stringify(errData));
+                }
+
+                const result = await response.json();
+
+                // Affichage sécurisé
+                document.getElementById('winrate').innerText = (result.win_rate || 0).toFixed(1) + "%";
+                document.getElementById('avg_rounds').innerText = (result.avg_rounds || 0).toFixed(1);
+                document.getElementById('cpu_time').innerText = result.calcul_time_sec;
+                resDiv.style.display = 'block';
+
+            } catch (e) {
+                alert("ERREUR DU SIMULATEUR :\n" + e.message);
+                console.error(e);
+            }
+            
+            btn.innerText = "LANCER LE COMBAT";
+            btn.disabled = false;
+        }
+    </script>
+</body>
+</html>
