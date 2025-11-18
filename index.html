@@ -2,340 +2,432 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>D&D Battle Manager</title>
+    <title>D&D Simulator - Open5e Edition</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #121212; color: #e0e0e0; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', sans-serif; background: #121212; color: #ccc; margin: 0; padding-bottom: 50px; }
         
-        /* NAV BAR */
-        .nav { background: #1f1f1f; display: flex; padding: 0 20px; border-bottom: 2px solid #333; }
-        .nav-btn { 
-            padding: 20px 30px; cursor: pointer; font-size: 1.1rem; font-weight: bold; color: #888; 
-            transition: 0.3s; border-bottom: 4px solid transparent;
-        }
-        .nav-btn:hover { color: white; background: #252525; }
-        .nav-btn.active { color: #e63946; border-bottom: 4px solid #e63946; }
+        /* Navigation */
+        .nav { background: #1f1f1f; display: flex; border-bottom: 2px solid #333; position: sticky; top:0; z-index: 100;}
+        .nav div { padding: 15px 20px; cursor: pointer; font-weight: bold; transition: 0.3s; }
+        .nav div:hover { background: #333; color: white; }
+        .nav div.active { border-bottom: 4px solid #e63946; color: #e63946; background: #252525; }
 
-        /* CONTENU */
-        .content { padding: 30px; max-width: 1200px; margin: 0 auto; display: none; }
-        .content.active { display: block; }
+        /* Layout */
+        .content { max-width: 1200px; margin: 20px auto; display: none; padding: 0 20px; }
+        .content.active { display: block; animation: fadeIn 0.3s; }
+        @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
 
-        h2 { color: #e63946; border-bottom: 1px solid #444; padding-bottom: 10px; }
+        h2 { color: #e63946; border-bottom: 1px solid #444; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+        h3 { color: #4cc9f0; margin-top: 20px; font-size: 1.1rem; }
 
-        /* FORMS */
-        .form-group { margin-bottom: 15px; }
-        label { display: block; color: #aaa; margin-bottom: 5px; font-size: 0.9rem; }
-        input, select { 
-            width: 100%; padding: 10px; background: #2a2a2a; border: 1px solid #444; 
-            color: white; border-radius: 4px; box-sizing: border-box;
-        }
-        .row { display: flex; gap: 20px; }
+        /* Open5e Import Box */
+        .import-box { background: #1a2a3a; border: 1px solid #2c5282; padding: 15px; border-radius: 6px; margin-bottom: 20px; }
+        .import-box h3 { margin-top: 0; color: #63b3ed; }
+        .search-results { max-height: 200px; overflow-y: auto; background: #111; border: 1px solid #444; margin-top: 5px; display: none; }
+        .search-item { padding: 8px; cursor: pointer; border-bottom: 1px solid #333; }
+        .search-item:hover { background: #2c5282; color: white; }
+
+        /* Forms */
+        .row { display: flex; gap: 15px; margin-bottom: 15px; }
         .col { flex: 1; }
+        input, select { width: 100%; padding: 10px; background: #2d2d2d; border: 1px solid #444; color: white; border-radius: 4px; box-sizing: border-box; }
+        label { display: block; margin-bottom: 5px; color: #aaa; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; }
 
-        /* ACTIONS SELECTION */
-        .action-checkboxes { 
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); 
-            gap: 10px; background: #222; padding: 15px; border-radius: 5px; 
-        }
-        .chk-item { display: flex; align-items: center; gap: 5px; cursor: pointer; padding: 5px; background: #333; border-radius: 4px; }
-        .chk-item input { width: auto; }
+        /* Stat Grid */
+        .stat-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; background: #1e1e1e; padding: 10px; border-radius: 6px; border: 1px solid #333; }
+        .stat-box { text-align: center; }
+        .stat-box input { text-align: center; font-weight: bold; color: #fff; font-size: 1.1rem; }
+        .mod-disp { font-size: 0.8rem; color: #4cc9f0; font-weight: bold; margin-top: 3px; }
 
-        /* BUTTONS */
-        .btn { 
-            background: #e63946; color: white; border: none; padding: 12px 25px; 
-            font-size: 1rem; cursor: pointer; border-radius: 4px; margin-top: 10px; 
-        }
-        .btn:hover { background: #d62828; }
-        .btn-success { background: #2a9d8f; }
+        /* Checkboxes */
+        .checkbox-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; background: #1a1a1a; padding: 10px; border: 1px solid #333; max-height: 300px; overflow-y: auto; }
+        .chk { display: flex; align-items: center; gap: 10px; background: #2d2d2d; padding: 8px; border-radius: 4px; cursor: pointer; transition: 0.2s; }
+        .chk:hover { background: #3d3d3d; }
+        .chk input { width: auto; margin: 0; }
 
-        /* LISTS */
-        .item-list { margin-top: 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px; }
-        .card { background: #252525; padding: 15px; border-radius: 5px; border-left: 4px solid #555; }
-        .card.pj { border-color: #4cc9f0; }
-        .card.monstre { border-color: #e63946; }
+        /* Buttons */
+        .btn { background: #e63946; color: white; border: none; padding: 12px 20px; cursor: pointer; border-radius: 4px; width: 100%; font-size: 1rem; font-weight: bold; text-transform: uppercase; margin-top: 15px; transition: 0.2s;}
+        .btn:hover { background: #d62828; transform: translateY(-2px); }
+        .btn-import { background: #2b6cb0; width: auto; padding: 8px 15px; font-size: 0.9rem; margin-top: 0;}
+        .btn-import:hover { background: #2c5282; }
 
-        /* SIMULATION */
-        .battle-setup { display: flex; gap: 40px; }
-        .team-box { flex: 1; background: #1e1e1e; padding: 20px; border-radius: 8px; }
-        .stat-box { background: #333; padding: 20px; text-align: center; border-radius: 8px; }
-        .stat-val { font-size: 2.5rem; font-weight: bold; color: #4cc9f0; }
-
+        /* Simulation Results */
+        #results { text-align: center; padding: 30px; background: #1e1e1e; margin-top: 20px; border-top: 4px solid #e63946; display: none; }
+        .big-stat { font-size: 3.5rem; font-weight: bold; color: #4cc9f0; margin: 10px 0; }
+        
+        .card-list { margin-top: 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+        .mini-card { background: #252525; padding: 10px; border-left: 4px solid #777; font-size: 0.9rem; }
+        .mini-card.pj { border-color: #4cc9f0; }
+        .mini-card.monstre { border-color: #e63946; }
     </style>
 </head>
 <body>
 
-    <!-- NAVIGATION -->
-    <div class="nav">
-        <div class="nav-btn active" onclick="showTab('tab-actions')">1. Actions</div>
-        <div class="nav-btn" onclick="showTab('tab-pj')">2. Créer Héros (PJ)</div>
-        <div class="nav-btn" onclick="showTab('tab-monstre')">3. Créer Monstres</div>
-        <div class="nav-btn" onclick="showTab('tab-simu')">4. ⚔️ SIMULATION</div>
+<div class="nav">
+    <div onclick="nav('tab-actions')" class="active">1. Actions & Sorts</div>
+    <div onclick="nav('tab-pj')">2. Personnages (PJ)</div>
+    <div onclick="nav('tab-monstre')">3. Monstres</div>
+    <div onclick="nav('tab-simu')">4. ⚔️ Simulation</div>
+</div>
+
+<!-- 1. ACTIONS -->
+<div id="tab-actions" class="content active">
+    <h2>Actions <button class="btn btn-import" onclick="toggleImport('act_import')">🔍 Chercher Sort (Open5e)</button></h2>
+    
+    <!-- IMPORT OPEN5E -->
+    <div id="act_import" class="import-box" style="display:none;">
+        <h3>Importer un Sort du SRD</h3>
+        <div style="display:flex; gap:10px;">
+            <input id="search_spell_in" placeholder="Ex: Fireball, Cure Wounds..." onkeyup="if(event.key==='Enter') searchSpells()">
+            <button class="btn btn-import" onclick="searchSpells()">Chercher</button>
+        </div>
+        <div id="spell_results" class="search-results"></div>
     </div>
 
-    <!-- ONGLET 1: ACTIONS -->
-    <div id="tab-actions" class="content active">
-        <h2>Créateur d'Actions / Sorts</h2>
-        <div class="row">
-            <div class="col">
-                <label>Nom de l'action (ex: Épée longue, Boule de Feu)</label>
-                <input type="text" id="act_nom" placeholder="Ex: Grande Hache">
-            </div>
-            <div class="col">
-                <label>Formule de Dés (ex: 1d8+3, 2d6, 4d10+5)</label>
-                <input type="text" id="act_dice" placeholder="Ex: 1d12+4">
-            </div>
-            <div class="col">
-                <label>Type</label>
-                <select id="act_type">
-                    <option value="attaque">Attaque (Dégâts)</option>
-                    <option value="soin">Soin (PV rendus)</option>
-                </select>
-            </div>
+    <div class="row">
+        <div class="col"><label>Nom</label><input id="act_nom" placeholder="Ex: Épée à deux mains"></div>
+        <div class="col"><label>Dégâts (Formule)</label><input id="act_dice" placeholder="Ex: 2d6"></div>
+        <div class="col"><label>Type</label>
+            <select id="act_type"><option value="attaque">Attaque</option><option value="soin">Soin</option></select>
         </div>
-        <button class="btn btn-success" onclick="createAction()">Sauvegarder Action</button>
+    </div>
+    <button class="btn" onclick="saveAction()">Créer l'Action</button>
+    <div id="list-act" class="card-list"></div>
+</div>
 
-        <div id="list-actions" class="item-list"></div>
+<!-- 2. PERSONNAGES -->
+<div id="tab-pj" class="content">
+    <h2>Héros (PJ)</h2>
+    <div class="row">
+        <div class="col"><label>Nom</label><input id="pj_nom" value="Guerrier"></div>
+        <div class="col"><label>Classe (Dés de Vie)</label>
+            <select id="pj_classe" onchange="calcHP('pj')">
+                <option value="d6">Magicien (d6)</option>
+                <option value="d8">Roublard / Clerc (d8)</option>
+                <option value="d10" selected>Guerrier / Paladin (d10)</option>
+                <option value="d12">Barbare (d12)</option>
+            </select>
+        </div>
+        <div class="col"><label>Niveau</label><input type="number" id="pj_lvl" value="1" onchange="calcHP('pj')"></div>
     </div>
 
-    <!-- ONGLET 2: PJ -->
-    <div id="tab-pj" class="content">
-        <h2>Créer un Personnage Joueur</h2>
-        <div class="row">
-            <div class="col">
-                <label>Nom</label><input type="text" id="pj_nom" placeholder="Guerrier">
-                <label>PV Max</label><input type="number" id="pj_hp" value="30">
-            </div>
-            <div class="col">
-                <label>CA (Armure)</label><input type="number" id="pj_ac" value="16">
-                <label>Init Bonus</label><input type="number" id="pj_init" value="2">
-            </div>
-            <div class="col">
-                <label>Bonus Touche</label><input type="number" id="pj_hit" value="5">
-                <label>Nb Attaques/Tour</label><input type="number" id="pj_att" value="1">
-            </div>
+    <h3>Caractéristiques</h3>
+    <div class="stat-grid" id="pj_stats"></div>
+
+    <div class="row" style="margin-top:15px;">
+        <div class="col"><label>PV Max</label><input type="number" id="pj_hp"></div>
+        <div class="col"><label>Classe d'Armure</label><input type="number" id="pj_ac" value="16"></div>
+    </div>
+
+    <h3>Actions Connues</h3>
+    <div id="pj_actions_chk" class="checkbox-grid"></div>
+
+    <button class="btn" onclick="saveFighter('PJ')">Enregistrer le PJ</button>
+    <div id="list-pj" class="card-list"></div>
+</div>
+
+<!-- 3. MONSTRES -->
+<div id="tab-monstre" class="content">
+    <h2>Monstres <button class="btn btn-import" onclick="toggleImport('m_import')">🐉 Importer (Open5e)</button></h2>
+    
+    <!-- IMPORT OPEN5E MONSTER -->
+    <div id="m_import" class="import-box" style="display:none;">
+        <h3>Importer depuis le Bestiaire Open5e</h3>
+        <p style="font-size:0.8rem; color:#aaa;">Cela remplira les stats et créera automatiquement les actions/attaques du monstre.</p>
+        <div style="display:flex; gap:10px;">
+            <input id="search_mon_in" placeholder="Ex: Goblin, Ancient Red Dragon..." onkeyup="if(event.key==='Enter') searchMonster()">
+            <button class="btn btn-import" onclick="searchMonster()">Chercher</button>
         </div>
+        <div id="mon_results" class="search-results"></div>
+    </div>
+
+    <div class="row">
+        <div class="col"><label>Nom</label><input id="m_nom" value="Monstre"></div>
+        <div class="col"><label>Type</label><input id="m_classe" value="Monstrosity"></div>
+        <div class="col"><label>CR / Niveau</label><input type="number" id="m_lvl" value="1"></div>
+    </div>
+
+    <h3>Caractéristiques</h3>
+    <div class="stat-grid" id="m_stats"></div>
+
+    <div class="row" style="margin-top:15px;">
+        <div class="col"><label>PV Max</label><input type="number" id="m_hp" value="10"></div>
+        <div class="col"><label>Classe d'Armure</label><input type="number" id="m_ac" value="12"></div>
+    </div>
+
+    <h3>Actions du Monstre</h3>
+    <div id="m_actions_chk" class="checkbox-grid"></div>
+
+    <button class="btn" onclick="saveFighter('MONSTRE')">Enregistrer le Monstre</button>
+    <div id="list-m" class="card-list"></div>
+</div>
+
+<!-- 4. SIMULATION -->
+<div id="tab-simu" class="content">
+    <h2>Champ de Bataille</h2>
+    <div class="row">
+        <div class="col">
+            <h3 style="color:#4cc9f0">Équipe Héros</h3>
+            <div id="sim_pj_chk" class="checkbox-grid" style="border-color:#4cc9f0;"></div>
+        </div>
+        <div class="col">
+            <h3 style="color:#e63946">Équipe Monstres</h3>
+            <div id="sim_m_chk" class="checkbox-grid" style="border-color:#e63946;"></div>
+        </div>
+    </div>
+    
+    <div style="text-align:center; margin-top:30px;">
+        <label style="display:inline;">Nombre de combats :</label>
+        <input type="number" id="sim_iter" value="2000" style="width:100px; display:inline; text-align:center;">
+        <br>
+        <button class="btn" onclick="runSimu()" style="width:50%; margin-top:20px; font-size:1.2rem;">LANCER LA GUERRE</button>
+    </div>
+
+    <div id="results">
+        <div class="big-stat" id="res_win">--%</div>
+        <p>Taux de Victoire des Héros</p>
+        <div class="row" style="justify-content: center; gap: 50px;">
+            <div>Rounds Moyens : <strong id="res_rounds" style="color:white;">--</strong></div>
+            <div>Pertes Moyennes (PJ) : <strong id="res_dead" style="color:#e63946;">--</strong></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const API_MONSTER = "https://api.open5e.com/monsters/";
+    const API_SPELL = "https://api.open5e.com/spells/";
+    const STATS = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
+
+    // --- NAVIGATION ---
+    function nav(id) {
+        document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
+        document.querySelectorAll('.nav div').forEach(d => d.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+        event.target.classList.add('active');
         
-        <label style="margin-top:15px">Sélectionner les Actions connues :</label>
-        <div id="pj-actions-list" class="action-checkboxes"></div>
+        if(id==='tab-actions') loadActions();
+        if(id==='tab-pj') { renderStats('pj'); loadChk('pj_actions_chk'); loadList('PJ', 'list-pj'); }
+        if(id==='tab-monstre') { renderStats('m'); loadChk('m_actions_chk'); loadList('MONSTRE', 'list-m'); }
+        if(id==='tab-simu') loadSimChk();
+    }
+    function toggleImport(id) {
+        const el = document.getElementById(id);
+        el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    }
+
+    // --- OPEN5E LOGIC ---
+    
+    // 1. Import MONSTERS
+    async function searchMonster() {
+        const q = document.getElementById('search_mon_in').value;
+        const res = await fetch(`${API_MONSTER}?search=${q}`);
+        const data = await res.json();
         
-        <button class="btn" onclick="createFighter('PJ')">Créer le PJ</button>
-        <div id="list-pj" class="item-list"></div>
-    </div>
+        const list = document.getElementById('mon_results');
+        list.innerHTML = '';
+        list.style.display = 'block';
+        
+        data.results.slice(0, 10).forEach(m => {
+            const div = document.createElement('div');
+            div.className = 'search-item';
+            div.innerHTML = `<b>${m.name}</b> (CR ${m.challenge_rating}) - HP: ${m.hit_points}`;
+            div.onclick = () => fillMonsterForm(m);
+            list.appendChild(div);
+        });
+    }
 
-    <!-- ONGLET 3: MONSTRES -->
-    <div id="tab-monstre" class="content">
-        <h2>Créer un Monstre</h2>
-        <div class="row">
-            <div class="col">
-                <label>Nom</label><input type="text" id="m_nom" placeholder="Gobelin">
-                <label>PV Max</label><input type="number" id="m_hp" value="15">
-            </div>
-            <div class="col">
-                <label>CA (Armure)</label><input type="number" id="m_ac" value="12">
-                <label>Init Bonus</label><input type="number" id="m_init" value="2">
-            </div>
-            <div class="col">
-                <label>Bonus Touche</label><input type="number" id="m_hit" value="4">
-                <label>Nb Attaques/Tour</label><input type="number" id="m_att" value="1">
-            </div>
-        </div>
+    async function fillMonsterForm(m) {
+        document.getElementById('mon_results').style.display = 'none';
+        document.getElementById('m_nom').value = m.name;
+        document.getElementById('m_classe').value = m.type;
+        document.getElementById('m_lvl').value = m.challenge_rating || 1;
+        document.getElementById('m_hp').value = m.hit_points;
+        document.getElementById('m_ac').value = m.armor_class;
 
-        <label style="margin-top:15px">Sélectionner les Actions du monstre :</label>
-        <div id="m-actions-list" class="action-checkboxes"></div>
+        // Stats
+        document.getElementById('m_str').value = m.strength;
+        document.getElementById('m_dex').value = m.dexterity;
+        document.getElementById('m_con').value = m.constitution;
+        document.getElementById('m_int').value = m.intelligence;
+        document.getElementById('m_wis').value = m.wisdom;
+        document.getElementById('m_cha').value = m.charisma;
+        STATS.forEach(s => updateMod('m', s));
 
-        <button class="btn" onclick="createFighter('MONSTRE')">Créer le Monstre</button>
-        <div id="list-monstre" class="item-list"></div>
-    </div>
-
-    <!-- ONGLET 4: SIMULATION -->
-    <div id="tab-simu" class="content">
-        <h2>Configuration du Combat</h2>
-        <div class="battle-setup">
-            <div class="team-box">
-                <h3>Équipe Héros (PJ)</h3>
-                <div id="simu-pj-list" class="action-checkboxes"></div>
-            </div>
-            <div class="team-box" style="border: 1px solid #e63946">
-                <h3>Équipe Monstres</h3>
-                <div id="simu-monstre-list" class="action-checkboxes"></div>
-            </div>
-        </div>
-
-        <div style="text-align: center; margin-top: 30px;">
-            <label>Nombre de Simulations</label>
-            <input type="number" id="sim_iter" value="5000" style="width:150px; text-align:center; margin: 0 auto 10px auto;">
-            <br>
-            <button class="btn" onclick="runSimu()" style="font-size: 1.5rem;">LANCER LA GUERRE</button>
-        </div>
-
-        <div id="results" style="display:none; margin-top:30px;">
-            <div class="item-list">
-                <div class="stat-box">
-                    <div class="stat-val" id="res_win">--</div>
-                    <div>Victoire PJ</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-val" id="res_rounds">--</div>
-                    <div>Rounds Moyens</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-val" id="res_dead">--</div>
-                    <div>PJ Morts (Moyenne)</div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        // --- GESTION DES ONGLETS ---
-        function showTab(id) {
-            document.querySelectorAll('.content').forEach(d => d.classList.remove('active'));
-            document.querySelectorAll('.nav-btn').forEach(d => d.classList.remove('active'));
-            document.getElementById(id).classList.add('active');
+        // PARSING ACTIONS AUTOMATIQUE
+        // On cherche les actions qui ont des dégâts type (2d6 + 4)
+        if(m.actions) {
+            const newActionIds = [];
             
-            // Highlight nav button (simple logic)
-            const btnIndex = ['tab-actions','tab-pj','tab-monstre','tab-simu'].indexOf(id);
-            document.querySelectorAll('.nav-btn')[btnIndex].classList.add('active');
-
-            // Refresh data when tab opens
-            if(id === 'tab-actions') loadActions();
-            if(id === 'tab-pj') { loadCheckboxes('pj-actions-list'); loadFighters('PJ', 'list-pj'); }
-            if(id === 'tab-monstre') { loadCheckboxes('m-actions-list'); loadFighters('MONSTRE', 'list-monstre'); }
-            if(id === 'tab-simu') loadSimuLists();
-        }
-
-        // --- API CALLS ---
-        async function loadActions() {
-            const res = await fetch('/api/action/list');
-            const data = await res.json();
-            const div = document.getElementById('list-actions');
-            div.innerHTML = data.map(a => `
-                <div class="card">
-                    <strong>${a.nom}</strong><br>
-                    ${a.formule_degats} (${a.type_action})
-                </div>
-            `).join('');
-        }
-
-        async function createAction() {
-            await fetch('/api/action/add', {
-                method: 'POST', headers: {'Content-Type':'application/json'},
-                body: JSON.stringify({
-                    nom: document.getElementById('act_nom').value,
-                    formule: document.getElementById('act_dice').value,
-                    type_action: document.getElementById('act_type').value
-                })
-            });
-            alert('Action créée !');
-            loadActions();
-        }
-
-        async function loadCheckboxes(targetId) {
-            const res = await fetch('/api/action/list');
-            const data = await res.json();
-            const div = document.getElementById(targetId);
-            div.innerHTML = data.map(a => `
-                <label class="chk-item">
-                    <input type="checkbox" value="${a.id}"> ${a.nom} (${a.formule_degats})
-                </label>
-            `).join('');
-        }
-
-        async function createFighter(type) {
-            const prefix = type === 'PJ' ? 'pj' : 'm';
-            
-            // Récupérer les actions cochées
-            const actionDiv = document.getElementById(type === 'PJ' ? 'pj-actions-list' : 'm-actions-list');
-            const selectedActions = Array.from(actionDiv.querySelectorAll('input:checked')).map(cb => parseInt(cb.value));
-
-            const data = {
-                nom: document.getElementById(prefix+'_nom').value,
-                type_entite: type,
-                hp: parseInt(document.getElementById(prefix+'_hp').value),
-                ac: parseInt(document.getElementById(prefix+'_ac').value),
-                init_bonus: parseInt(document.getElementById(prefix+'_init').value),
-                hit_bonus: parseInt(document.getElementById(prefix+'_hit').value),
-                nb_attaques: parseInt(document.getElementById(prefix+'_att').value),
-                actions_ids: selectedActions
-            };
-
-            await fetch('/api/fighter/add', {
-                method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify(data)
-            });
-            alert(type + ' Créé !');
-            loadFighters(type, type === 'PJ' ? 'list-pj' : 'list-monstre');
-        }
-
-        async function loadFighters(type, targetId) {
-            const res = await fetch(`/api/fighter/list?type=${type}`);
-            const data = await res.json();
-            document.getElementById(targetId).innerHTML = data.map(f => `
-                <div class="card ${type === 'PJ' ? 'pj' : 'monstre'}">
-                    <strong>${f.nom}</strong><br>
-                    HP: ${f.hp} | AC: ${f.ac}
-                </div>
-            `).join('');
-        }
-
-        // --- SIMULATION LOGIC ---
-        async function loadSimuLists() {
-            // Load PJs
-            const resPj = await fetch('/api/fighter/list?type=PJ');
-            const pjs = await resPj.json();
-            document.getElementById('simu-pj-list').innerHTML = pjs.map(f => `
-                <label class="chk-item">
-                    <input type="checkbox" value="${f.id}"> ${f.nom} (HP ${f.hp})
-                </label>
-            `).join('');
-
-            // Load Monstres
-            const resM = await fetch('/api/fighter/list?type=MONSTRE');
-            const ms = await resM.json();
-            document.getElementById('simu-monstre-list').innerHTML = ms.map(f => `
-                <label class="chk-item">
-                    <input type="checkbox" value="${f.id}"> ${f.nom} (HP ${f.hp})
-                </label>
-            `).join('');
-        }
-
-        async function runSimu() {
-            const pjIds = Array.from(document.getElementById('simu-pj-list').querySelectorAll('input:checked')).map(cb => parseInt(cb.value));
-            const mIds = Array.from(document.getElementById('simu-monstre-list').querySelectorAll('input:checked')).map(cb => parseInt(cb.value));
-            
-            if(pjIds.length === 0 || mIds.length === 0) {
-                alert("Sélectionnez au moins un combattant dans chaque équipe !");
-                return;
+            for(let act of m.actions) {
+                // Regex pour trouver "1d8 + 2" ou "2d6"
+                // Cherche patterns comme: (1d6 + 2) ou (4d8)
+                const diceMatch = act.desc.match(/\((\d+d\d+\s*(?:\+\s*\d+)?)\)/);
+                
+                if(diceMatch) {
+                    const formule = diceMatch[1].replace(/\s/g, ''); // Nettoyer espaces
+                    const nomAction = `${act.name} (${m.name})`; // Ex: "Shortsword (Goblin)"
+                    
+                    // Créer l'action en DB via API Backend
+                    const res = await fetch('/api/action/add', {
+                        method: 'POST', headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({ nom: nomAction, formule: formule, type_action: 'attaque' })
+                    });
+                    const json = await res.json();
+                    if(json.id) newActionIds.push(json.id);
+                }
             }
 
-            const btn = document.querySelector('button[onclick="runSimu()"]');
-            btn.disabled = true; btn.innerText = "Guerre en cours...";
-            document.getElementById('results').style.display = 'none';
-
-            try {
-                const res = await fetch('/api/simulate', {
-                    method: 'POST', headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({
-                        iterations: parseInt(document.getElementById('sim_iter').value),
-                        pj_ids: pjIds,
-                        monstre_ids: mIds
-                    })
-                });
-                const stats = await res.json();
-                
-                if(stats.error) { alert(stats.error); }
-                else {
-                    document.getElementById('res_win').innerText = stats.win_rate.toFixed(1) + '%';
-                    document.getElementById('res_rounds').innerText = stats.avg_rounds.toFixed(1);
-                    document.getElementById('res_dead').innerText = stats.avg_deaths.toFixed(1);
-                    document.getElementById('results').style.display = 'block';
-                }
-            } catch(e) { console.error(e); alert("Erreur !"); }
-            
-            btn.disabled = false; btn.innerText = "LANCER LA GUERRE";
+            // Recharger les checkboxes et cocher les nouvelles actions
+            await loadChk('m_actions_chk');
+            const boxes = document.getElementById('m_actions_chk').querySelectorAll('input');
+            boxes.forEach(b => {
+                if(newActionIds.includes(parseInt(b.value))) b.checked = true;
+            });
+            alert(`Monstre "${m.name}" importé ! ${newActionIds.length} actions détectées et créées.`);
         }
+    }
+
+    // 2. Import SPELLS
+    async function searchSpells() {
+        const q = document.getElementById('search_spell_in').value;
+        const res = await fetch(`${API_SPELL}?search=${q}`);
+        const data = await res.json();
         
-        // Init
-        showTab('tab-actions');
-    </script>
+        const list = document.getElementById('spell_results');
+        list.innerHTML = '';
+        list.style.display = 'block';
+        
+        data.results.slice(0, 10).forEach(s => {
+            const div = document.createElement('div');
+            div.className = 'search-item';
+            div.innerText = `${s.name} (Lvl ${s.level})`;
+            div.onclick = () => {
+                document.getElementById('act_nom').value = s.name;
+                document.getElementById('act_type').value = (s.desc.includes("heal") || s.school === "Evocation") ? "attaque" : "soin"; 
+                if(s.desc.includes("heal")) document.getElementById('act_type').value = "soin";
+                
+                // Tentative extraction dégâts "8d6"
+                const dmg = s.desc.match(/(\d+d\d+)/);
+                if(dmg) document.getElementById('act_dice').value = dmg[1];
+                
+                list.style.display = 'none';
+            };
+            list.appendChild(div);
+        });
+    }
+
+    // --- CORE LOGIC ---
+    
+    function renderStats(p) {
+        const div = document.getElementById(p+'_stats');
+        if(div.innerHTML.trim() !== "") return; // Déjà rendu
+        STATS.forEach(s => {
+            div.innerHTML += `
+                <div class="stat-box">
+                    <label>${s.toUpperCase()}</label>
+                    <input type="number" id="${p}_${s}" value="10" onchange="updateMod('${p}', '${s}')">
+                    <div id="mod_${p}_${s}" class="mod-disp">+0</div>
+                </div>`;
+        });
+    }
+
+    function updateMod(p, s) {
+        const val = parseInt(document.getElementById(`${p}_${s}`).value);
+        const mod = Math.floor((val - 10) / 2);
+        document.getElementById(`mod_${p}_${s}`).innerText = (mod>=0?'+':'') + mod;
+        if(p === 'pj') calcHP('pj');
+    }
+
+    function calcHP(p) {
+        const lvl = parseInt(document.getElementById(p+'_lvl').value);
+        const con = Math.floor((parseInt(document.getElementById(p+'_con').value)-10)/2);
+        const hd = parseInt(document.getElementById(p+'_classe').value.substring(1));
+        let hp = hd + con;
+        if(lvl > 1) hp += (lvl - 1) * ((hd/2)+1 + con);
+        document.getElementById(p+'_hp').value = Math.max(1, hp);
+    }
+
+    async function saveAction() {
+        const data = {
+            nom: document.getElementById('act_nom').value,
+            formule: document.getElementById('act_dice').value,
+            type_action: document.getElementById('act_type').value
+        };
+        await fetch('/api/action/add', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)});
+        loadActions();
+        document.getElementById('act_nom').value = "";
+        document.getElementById('act_dice').value = "";
+    }
+
+    async function loadActions() {
+        const res = await fetch('/api/action/list');
+        const d = await res.json();
+        document.getElementById('list-act').innerHTML = d.map(a => `<div class="mini-card"><b>${a.nom}</b><br>${a.formule_degats}</div>`).join('');
+    }
+
+    async function loadChk(target) {
+        const res = await fetch('/api/action/list');
+        const d = await res.json();
+        document.getElementById(target).innerHTML = d.map(a => 
+            `<label class="chk"><input type="checkbox" value="${a.id}"> ${a.nom} (${a.formule_degats})</label>`
+        ).join('');
+    }
+
+    async function saveFighter(type) {
+        const p = type==='PJ'?'pj':'m';
+        const stats = {};
+        STATS.forEach(k => stats[k] = parseInt(document.getElementById(`${p}_${k}`).value));
+        const ids = Array.from(document.getElementById(`${p}_actions_chk`).querySelectorAll('input:checked')).map(c=>parseInt(c.value));
+        
+        const data = {
+            nom: document.getElementById(`${p}_nom`).value,
+            type_entite: type,
+            classe: document.getElementById(`${p}_classe`).value,
+            niveau: parseInt(document.getElementById(`${p}_lvl`).value),
+            stats: stats,
+            hp_max: parseInt(document.getElementById(`${p}_hp`).value),
+            ac: parseInt(document.getElementById(`${p}_ac`).value),
+            actions_ids: ids
+        };
+        await fetch('/api/fighter/add', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+        alert('Sauvegardé');
+        loadList(type, type==='PJ'?'list-pj':'list-m');
+    }
+
+    async function loadList(type, target) {
+        const res = await fetch(`/api/fighter/list?type=${type}`);
+        const d = await res.json();
+        document.getElementById(target).innerHTML = d.map(f => 
+            `<div class="mini-card ${type==='PJ'?'pj':'monstre'}"><b>${f.nom}</b> (HP ${f.hp_max} / AC ${f.ac})</div>`
+        ).join('');
+    }
+
+    async function loadSimChk() {
+        let res = await fetch('/api/fighter/list?type=PJ'); let d = await res.json();
+        document.getElementById('sim_pj_chk').innerHTML = d.map(f => `<label class="chk"><input type="checkbox" value="${f.id}"> ${f.nom} (Niv ${f.niveau})</label>`).join('');
+        
+        res = await fetch('/api/fighter/list?type=MONSTRE'); d = await res.json();
+        document.getElementById('sim_m_chk').innerHTML = d.map(f => `<label class="chk"><input type="checkbox" value="${f.id}"> ${f.nom} (CR ${f.niveau})</label>`).join('');
+    }
+
+    async function runSimu() {
+        const pjs = Array.from(document.getElementById('sim_pj_chk').querySelectorAll('input:checked')).map(c=>parseInt(c.value));
+        const ms = Array.from(document.getElementById('sim_m_chk').querySelectorAll('input:checked')).map(c=>parseInt(c.value));
+        if(!pjs.length || !ms.length) return alert("Il faut des combattants des deux côtés !");
+
+        document.getElementById('results').style.display = 'none';
+        const res = await fetch('/api/simulate', {method:'POST', headers:{'Content-Type':'application/json'}, 
+            body:JSON.stringify({iterations: parseInt(document.getElementById('sim_iter').value), pj_ids:pjs, monstre_ids:ms})});
+        const s = await res.json();
+        
+        document.getElementById('res_win').innerText = s.win_rate.toFixed(1) + '%';
+        document.getElementById('res_rounds').innerText = s.avg_rounds.toFixed(1);
+        document.getElementById('res_dead').innerText = s.avg_deaths.toFixed(1);
+        document.getElementById('results').style.display = 'block';
+    }
+    
+    // Init
+    nav('tab-actions');
+</script>
 </body>
 </html>
