@@ -253,20 +253,16 @@ def simuler_bataille(args):
     def msg(t): 
         if log_enabled: log.append(t)
 
+    # 1. On lance l'initiative UNE SEULE FOIS avant le début du combat
+    for e in tous:
+        e.init = random.randint(1,20) + e.init_bonus
+    tous.sort(key=lambda x: x.init, reverse=True)
+
+    # 2. Ensuite, on lance la boucle des tours
     while any(p.hp > 0 for p in pj) and any(m.hp > 0 for m in mon):
         rounds += 1
         if rounds > 200: break
         if log_enabled: msg(f"--- TOUR {rounds} ---")
-        
-        # Roll init only once per round (Simplification 5e standard)
-        for e in tous: 
-            e.init = random.randint(1,20) + e.init_bonus
-        tous.sort(key=lambda x: x.init, reverse=True)
-
-        while any(p.hp > 0 for p in pj) and any(m.hp > 0 for m in mon):
-            rounds += 1
-            if rounds > 200: break
-            if log_enabled: msg(f"--- TOUR {rounds} ---")
         
         # Pre-calc averages
         ac_pj = sum(p.ac for p in pj)/len(pj) if pj else 10
@@ -319,9 +315,15 @@ def simuler_bataille(args):
             for t in targets_list:
                 if t.state == 'dead': continue
                 if t.hp <= 0 and t.state != 'downed':
-                    t.hp = 0
-                    t.state = 'downed'
-                    if log_enabled: msg(f"☠️ {t.nom} tombe à terre (downed) !")
+                    # Si c'est un monstre, on le tue définitivement pour éviter qu'il soit soigné
+                    if t.team == 'MONSTRE':
+                        t.hp = -1
+                        t.state = 'dead'
+                        if log_enabled: msg(f"💀 {t.nom} meurt définitivement.")
+                    else:
+                        t.hp = 0
+                        t.state = 'downed'
+                        if log_enabled: msg(f"☠️ {t.nom} tombe à terre (downed) !")
                 if t.state == 'downed' or t.state == 'stable':
                     # Seul le soin peut relever
                     if action['type_action'] == 'soin':
@@ -392,9 +394,15 @@ def simuler_bataille(args):
                             elif log_enabled: msg(f"💨 {actor.nom} manque ({d20}+{att}).")
                 # Check mort APRÈS la boucle d'attaques (ligne 169 originale)
                 if t.hp <= 0 and t.state == 'alive':
-                    t.hp = 0
-                    t.state = 'downed'
-                    if log_enabled: msg(f"☠️ {t.nom} tombe à terre (downed) !")
+                    # Si c'est un monstre, on le tue définitivement pour éviter qu'il soit soigné
+                    if t.team == 'MONSTRE':
+                        t.hp = -1
+                        t.state = 'dead'
+                        if log_enabled: msg(f"💀 {t.nom} meurt définitivement.")
+                    else:
+                        t.hp = 0
+                        t.state = 'downed'
+                        if log_enabled: msg(f"☠️ {t.nom} tombe à terre (downed) !")
                 if t.state == 'dead' and log_enabled:
                     msg(f"💀 {t.nom} meurt définitivement.")
 
