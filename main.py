@@ -255,7 +255,7 @@ def simuler_bataille(args):
 
     while any(p.hp > 0 for p in pj) and any(m.hp > 0 for m in mon):
         rounds += 1
-        if rounds > 20: break
+        if rounds > 200: break
         if log_enabled: msg(f"--- TOUR {rounds} ---")
         
         # Roll init only once per round (Simplification 5e standard)
@@ -265,7 +265,7 @@ def simuler_bataille(args):
 
         while any(p.hp > 0 for p in pj) and any(m.hp > 0 for m in mon):
             rounds += 1
-            if rounds > 20: break
+            if rounds > 200: break
             if log_enabled: msg(f"--- TOUR {rounds} ---")
         
         # Pre-calc averages
@@ -296,7 +296,13 @@ def simuler_bataille(args):
 
             # Choix de l'action
             action = actor.choisir_action(ac_m if is_pj else ac_pj)
-            if not action: continue
+
+            # AJOUTEZ CECI POUR DEBUGGER
+            if not action:
+                # On affiche un message seulement au tour 1 pour ne pas spammer
+                if rounds == 1 and log_enabled:
+                    msg(f"⚠️ {actor.nom} passe son tour (aucune action valide trouvée !)")
+                continue
 
             # --- LOGIQUE AOE ---
             targets_list = [target] # Par défaut, une seule cible
@@ -393,8 +399,11 @@ def simuler_bataille(args):
                     msg(f"💀 {t.nom} meurt définitivement.")
 
     # Return stats
+    # CORRECTION : On ne gagne que si on est en vie ET que les ennemis sont morts
+    victoire = any(p.hp > 0 for p in pj) and not any(m.hp > 0 for m in mon)
+
     return {
-        "victoire_pj": any(p.hp > 0 for p in pj),
+        "victoire_pj": victoire,
         "rounds": rounds,
         "morts": sum(1 for p in pj if p.hp <= 0),
         "log": log,
