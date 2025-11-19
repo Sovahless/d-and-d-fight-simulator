@@ -100,6 +100,108 @@ class ActionModel(BaseModel):
     id: Optional[int] = None
     nom: str
     formule: str
+import time, random, asyncio, sqlite3, re, json
+from math import floor
+from concurrent.futures import ProcessPoolExecutor
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+from typing import List, Optional
+from functools import lru_cache
+
+app = FastAPI()
+DB_NAME = "dnd_database.db"
+
+# --- 1. OPTIMISATION : PARSING DES DÉS AVEC CACHE ---
+# On décompose le texte UNE fois, on garde le résultat en RAM.
+@lru_cache(maxsize=1024)
+def parse_dice_string(dice_str: str):
+    """Transforme '2d6+4' en tuple (nb_des, faces, bonus)"""
+    if not dice_str: return (0, 0, 0)
+    s = str(dice_str).lower().replace(" ", "")
+    if 'd' not in s:
+        try: return (0, 0, int(s))
+        except: return (0, 0, 0)
+    
+    nb_dice = 0
+    faces = 0
+    bonus = 0
+    
+    parts = re.split(r'([+-])', s)
+    sign = 1
+    for p in parts:
+        if p == '+': sign = 1
+        elif p == '-': sign = -1
+        elif 'd' in p:
+            try:
+                n_str, f_str = p.split('d')
+                n = int(n_str) if n_str else 1
+                f = int(f_str)
+                # On ne gère ici que l'addition simple de dés, 
+                # pour des formules complexes, on simplifie
+                nb_dice += n * sign # Attention: gestion simplifiée
+                faces = f 
+            except: pass
+        elif p.isdigit():
+            bonus += int(p) * sign
+            
+    return (nb_dice, faces, bonus)
+
+def roll_fast(dice_data):
+    """Exécute le jet à partir des données pré-parsées"""
+    n, f, b = dice_data
+    if n == 0: return b
+    # Optimisation mathématique : random.choices est parfois plus lent que la boucle simple sur petits nombres
+    # Sur gros volume, sum(random.randint) reste très correct en Python pur
+    return sum(random.randint(1, f) for _ in range(n)) + b
+
+def roll_d20_fast(adv: int):
+    """ 1=Adv, -1=Disadv, 0=Normal """
+    r1 = random.randint(1, 20)
+    if adv == 0: return r1, False
+    r2 = random.randint(1, 20)
+    if adv == 1: return (r1 if r1 > r2 else r2), True
+    return (r1 if r1 < r2 else r2), True
+
+# --- 2. TABLES DE PROGRESSION (Pre-computed) ---
+FULL_CASTER = [[2,0,0,0,0],[3,0,0,0,0],[4,2,0,0,0],[4,3,0,0,0],[4,3,2,0,0],[4,3,3,0,0],[4,3,3,1,0],[4,3,3,2,0],[4,3,3,3,1],[4,3,3,3,2]]
+HALF_CASTER = [[0,0,0,0,0],[2,0,0,0,0],[3,0,0,0,0],[3,0,0,0,0],[4,2,0,0,0],[4,2,0,0,0],[4,3,0,0,0],[4,3,0,0,0],[4,3,2,0,0],[4,3,2,0,0]]
+
+def get_slots(classe, level):
+    idx = min(level, 10) - 1
+    if idx < 0: return [0]*5
+    if classe in ["Mage", "Clerc", "Druide", "Barde", "Ensorceleur"]: return list(FULL_CASTER[idx])
+    if classe in ["Paladin", "Rôdeur"]: return list(HALF_CASTER[idx])
+    if classe == "Sorcier": return [0,0,2,0,0] if level >= 5 else [0,2,0,0,0]
+    return [0]*5
+
+# --- DB INIT ---
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    # Table actions mise à jour avec 'mastery'
+    c.execute('''CREATE TABLE IF NOT EXISTS actions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT, formule_degats TEXT, type_action TEXT, level INTEGER, save_stat TEXT, effect_json TEXT, mastery TEXT
+    )''')
+    # MIGRATION AUTOMATIQUE : On tente d'ajouter la colonne si elle manque
+    try:
+        c.execute("ALTER TABLE actions ADD COLUMN mastery TEXT")
+    except:
+        pass # La colonne existe déjà, tout va bien
+
+    c.execute('''CREATE TABLE IF NOT EXISTS combattants (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT, type_entite TEXT, classe TEXT, niveau INTEGER,
+        force INTEGER, dexterite INTEGER, constitution INTEGER, intelligence INTEGER, sagesse INTEGER, charisme INTEGER,
+        hp_max INTEGER, ac INTEGER, actions_ids TEXT, features TEXT, position TEXT, behavior TEXT
+    )''')
+    conn.commit(); conn.close()
+init_db()
+
+# --- MODELES ---
+class ActionModel(BaseModel):
+    id: Optional[int] = None
+    nom: str
+    formule: str
     type_action: str
     level: int = 0
     save_stat: Optional[str] = None
@@ -114,409 +216,201 @@ class FighterModel(BaseModel):
 class SimuRequest(BaseModel):
     iterations: int; pj_ids: List[int]; monstre_ids: List[int]
 
-# --- MOTEUR OPTIMISÉ ---
-class EntiteCombat:
-    # OPTIMISATION __slots__ : Réduit drastiquement l'empreinte mémoire et accélère l'accès aux attributs
-    __slots__ = ('id', 'nom', 'team', 'classe', 'lvl', 'stats', 'mods', 'hp', 'hp_max', 'base_ac', 
-                 'actions', 'feats', 'position', 'behavior', 'prof', 'slots', 'effects', 
-                 'concentrating_on', 'init_bonus', 'total_dmg_done', 'init', 'use_gwm', 
-                 'nb_attacks', 'state', 'death_saves_success', 'death_saves_fail', 'vex_target_id')
+@app.post("/api/action/save")
+def save_action(a: ActionModel):
+    conn = sqlite3.connect(DB_NAME)
+    if a.id:
+        conn.execute("UPDATE actions SET nom=?, formule_degats=?, type_action=?, level=?, save_stat=?, effect_json=?, mastery=? WHERE id=?",
+                     (a.nom, a.formule, a.type_action, a.level, a.save_stat, a.effect_json, a.mastery, a.id))
+    for p in parts:
+        if p == '+': sign = 1
+        elif p == '-': sign = -1
+        elif 'd' in p:
+            try:
+                n_str, f_str = p.split('d')
+                n = int(n_str) if n_str else 1
+                f = int(f_str)
+                # On ne gère ici que l'addition simple de dés, 
+                # pour des formules complexes, on simplifie
+                nb_dice += n * sign # Attention: gestion simplifiée
+                faces = f 
+            except: pass
+        elif p.isdigit():
+            bonus += int(p) * sign
+            
+    return (nb_dice, faces, bonus)
 
-    def __init__(self, data, actions_map):
-        self.id = data['id']; self.nom = data['nom']; self.team = data['type_entite']
-        self.classe = data['classe']; self.lvl = data['niveau']
-        
-        # Stats brutes
-        self.stats = (data['force'], data['dexterite'], data['constitution'], data['intelligence'], data['sagesse'], data['charisme'])
-        # Mods pré-calculés (Tuple pour accès rapide par index: 0=STR, 1=DEX...)
-        self.mods = {'str': floor((self.stats[0]-10)/2), 'dex': floor((self.stats[1]-10)/2), 'con': floor((self.stats[2]-10)/2), 
-                     'int': floor((self.stats[3]-10)/2), 'wis': floor((self.stats[4]-10)/2), 'cha': floor((self.stats[5]-10)/2)}
-        
-        self.hp = data['hp_max']; self.hp_max = data['hp_max']; self.base_ac = data['ac']
-        
-        # Lookup rapide des actions via la Map (O(1)) au lieu de boucler
-        ids = json.loads(data['actions_ids']) if data['actions_ids'] else []
-        self.actions = [actions_map[i] for i in ids if i in actions_map]
-        
-        # Pre-parse dice for actions to avoid regex at runtime
-        for a in self.actions:
-            if 'parsed_dice' not in a:
-                a['parsed_dice'] = parse_dice_string(a['formule_degats'])
-                # Pre-parse effects too
-                if a.get('effect_json'):
-                    try:
-                        eff = json.loads(a['effect_json'])
-                        if eff.get('val') and isinstance(eff['val'], str) and 'd' in eff['val']:
-                             eff['parsed_val'] = parse_dice_string(eff['val'])
-                        else:
-                             eff['parsed_val'] = (0,0, int(eff['val']) if str(eff['val']).isdigit() else 0)
-                        a['parsed_effect'] = eff
-                    except: a['parsed_effect'] = None
-                else: a['parsed_effect'] = None
+def roll_fast(dice_data):
+    """Exécute le jet à partir des données pré-parsées"""
+    n, f, b = dice_data
+    if n == 0: return b
+    # Optimisation mathématique : random.choices est parfois plus lent que la boucle simple sur petits nombres
+    # Sur gros volume, sum(random.randint) reste très correct en Python pur
+    return sum(random.randint(1, f) for _ in range(n)) + b
 
-        self.feats = set(json.loads(data['features'])) if data['features'] else set()
-        self.position = data['position']; self.behavior = data['behavior']
-        self.prof = 2 + floor((self.lvl - 1) / 4)
-        self.slots = get_slots(self.classe, self.lvl) if self.team == 'PJ' else [0]*5
-        self.effects = []; self.concentrating_on = None; self.init_bonus = self.mods['dex']; self.total_dmg_done = 0
-        self.init = 0
-        self.use_gwm = False
-        # --- MORTS & DEATH SAVES ---
-        self.death_saves_success = 0
-        self.death_saves_fail = 0
-        self.state = 'alive' # 'alive', 'downed', 'dead'
+def roll_d20_fast(adv: int):
+    """ 1=Adv, -1=Disadv, 0=Normal """
+    r1 = random.randint(1, 20)
+    if adv == 0: return r1, False
+    r2 = random.randint(1, 20)
+    if adv == 1: return (r1 if r1 > r2 else r2), True
+    return (r1 if r1 < r2 else r2), True
 
-        # --- VEX TARGET (maîtrise) ---
-        self.vex_target_id = None
+# --- 2. TABLES DE PROGRESSION (Pre-computed) ---
+FULL_CASTER = [[2,0,0,0,0],[3,0,0,0,0],[4,2,0,0,0],[4,3,0,0,0],[4,3,2,0,0],[4,3,3,0,0],[4,3,3,1,0],[4,3,3,2,0],[4,3,3,3,1],[4,3,3,3,2]]
+HALF_CASTER = [[0,0,0,0,0],[2,0,0,0,0],[3,0,0,0,0],[3,0,0,0,0],[4,2,0,0,0],[4,2,0,0,0],[4,3,0,0,0],[4,3,0,0,0],[4,3,2,0,0],[4,3,2,0,0]]
 
-        # --- CORRECTION 2A : CALCUL EXTRA ATTACK ---
-        self.nb_attacks = 1
-        # Note : Le Moine n'est pas dans votre liste HTML mais devrait y être.
-        martial_classes = ["Guerrier", "Barbare", "Paladin", "Rôdeur", "Moine"] 
-        if self.classe in martial_classes and self.lvl >= 5:
-            self.nb_attacks = 2
-        if self.classe == "Guerrier" and self.lvl >= 11: # Le Guerrier a une 3ème attaque
-            self.nb_attacks = 3
+def get_slots(classe, level):
+    idx = min(level, 10) - 1
+    if idx < 0: return [0]*5
+    if classe in ["Mage", "Clerc", "Druide", "Barde", "Ensorceleur"]: return list(FULL_CASTER[idx])
+    if classe in ["Paladin", "Rôdeur"]: return list(HALF_CASTER[idx])
+    if classe == "Sorcier": return [0,0,2,0,0] if level >= 5 else [0,2,0,0,0]
+    return [0]*5
 
-    @property
-    def ac(self):
-        # Optimisation : generator expression rapide
-        return self.base_ac + sum(e['val'] for e in self.effects if e['type'] == 'buff_ac')
+# --- DB INIT ---
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    # Table actions mise à jour avec 'mastery'
+    c.execute('''CREATE TABLE IF NOT EXISTS actions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT, formule_degats TEXT, type_action TEXT, level INTEGER, save_stat TEXT, effect_json TEXT, mastery TEXT
+    )''')
+    # MIGRATION AUTOMATIQUE : On tente d'ajouter la colonne si elle manque
+    try:
+        c.execute("ALTER TABLE actions ADD COLUMN mastery TEXT")
+    except:
+        pass # La colonne existe déjà, tout va bien
 
-    def get_save_mod(self, stat):
-        return self.mods.get(stat, 0) + self.prof
+    c.execute('''CREATE TABLE IF NOT EXISTS combattants (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT, type_entite TEXT, classe TEXT, niveau INTEGER,
+        force INTEGER, dexterite INTEGER, constitution INTEGER, intelligence INTEGER, sagesse INTEGER, charisme INTEGER,
+        hp_max INTEGER, ac INTEGER, actions_ids TEXT, features TEXT, position TEXT, behavior TEXT
+    )''')
+    conn.commit(); conn.close()
+init_db()
 
-    def check_concentration(self, dmg):
-        if not self.concentrating_on: return False
-        dc = max(10, floor(dmg / 2))
-        save, _ = roll_d20_fast(0)
-        if "War Caster" in self.feats: save = max(save, roll_d20_fast(0)[0])
-        
-        if (save + self.get_save_mod('con')) < dc:
-            self.effects = [e for e in self.effects if not e.get('conc')]
-            self.concentrating_on = None
-            return True
-        return False
+# --- MODELES ---
+class ActionModel(BaseModel):
+    id: Optional[int] = None
+    nom: str
+    formule: str
+import time, random, asyncio, sqlite3, re, json
+from math import floor
+from concurrent.futures import ProcessPoolExecutor
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+from typing import List, Optional
+from functools import lru_cache
 
-    def start_turn(self):
-        # List comprehension est plus rapide que boucle remove
-        self.effects = [e for e in self.effects if (e.update({'duration': e['duration']-1}) or True) and e['duration'] >= 0]
-        # --- DEATH SAVES ---
-        if self.state == 'downed':
-            d20 = random.randint(1, 20)
-            if d20 == 20:
-                self.state = 'alive'
-                self.hp = 1
-                self.death_saves_success = 0
-                self.death_saves_fail = 0
-            elif d20 == 1:
-                self.death_saves_fail += 2
-            elif d20 >= 10:
-                self.death_saves_success += 1
-            else:
-                self.death_saves_fail += 1
-            # Stable
-            if self.death_saves_success >= 3:
-                self.state = 'stable'
-            # Mort définitive
-            if self.death_saves_fail >= 3:
-                self.state = 'dead'
-                self.hp = -1
+app = FastAPI()
+DB_NAME = "dnd_database.db"
 
-    def has_condition(self, c):
-        for e in self.effects:
-            if e['type'] == c: return True
-        return False
-
-    def choisir_cible(self, enemies):
-        if not enemies: return None
-        if self.behavior == 'focus_low_hp': return min(enemies, key=lambda x: x.hp)
-        if self.behavior == 'focus_backline': 
-            back = [e for e in enemies if e.position == 'back']
-            if back: return random.choice(back)
-        return random.choice(enemies)
-
-    def choisir_action(self, ac_avg):
-        # Filtrage optimisé
-        candidates = []
-        for a in self.actions:
-            if a['level'] == 0: candidates.append(a)
-            elif self.team == 'MONSTRE': candidates.append(a)
-            else:
-                # Check slot
-                idx = min(4, a['level']-1)
-                if self.slots[idx] > 0: candidates.append(a)
-        
-        if not candidates: return None
-        
-        self.use_gwm = "Great Weapon Master" in self.feats and ac_avg < 16
-        # Sort simple pour l'IA (Privilégie haut niveau)
-        candidates.sort(key=lambda x: x['level'], reverse=True)
-        
-        # Petit random pour ne pas être robotique
-        return candidates[0] if (len(candidates)==1 or random.random() < 0.7) else candidates[1]
-
-def simuler_bataille(args):
-    pj_data, m_data, act_map, log_enabled = args
+# --- 1. OPTIMISATION : PARSING DES DÉS AVEC CACHE ---
+# On décompose le texte UNE fois, on garde le résultat en RAM.
+@lru_cache(maxsize=1024)
+def parse_dice_string(dice_str: str):
+    """Transforme '2d6+4' en tuple (nb_des, faces, bonus)"""
+    if not dice_str: return (0, 0, 0)
+    s = str(dice_str).lower().replace(" ", "")
+    if 'd' not in s:
+        try: return (0, 0, int(s))
+        except: return (0, 0, 0)
     
-    # Création des objets (Coûteux, mais nécessaire car l'état change)
-    pj = [EntiteCombat(d, act_map) for d in pj_data]
-    mon = [EntiteCombat(d, act_map) for d in m_data]
-    tous = pj + mon
+    nb_dice = 0
+    faces = 0
+    bonus = 0
     
-    rounds = 0
-    log = []
-    def msg(t): 
-        if log_enabled: log.append(t)
-
-    # 1. On lance l'initiative UNE SEULE FOIS avant le début du combat
-    for e in tous:
-        e.init = random.randint(1,20) + e.init_bonus
-    tous.sort(key=lambda x: x.init, reverse=True)
-
-    # 2. Ensuite, on lance la boucle des tours
-    while any(p.hp > 0 for p in pj) and any(m.hp > 0 for m in mon):
-        rounds += 1
-        if rounds > 200: break
-        if log_enabled: msg(f"--- TOUR {rounds} ---")
-        
-        # Pre-calc averages
-        ac_pj = sum(p.ac for p in pj)/len(pj) if pj else 10
-        ac_m = sum(m.ac for m in mon)/len(mon) if mon else 10
-
-        for actor in tous:
-            if actor.hp <= 0: continue
-            # Check condition rapide
-            if actor.has_condition('paralyzed'): continue
+    parts = re.split(r'([+-])', s)
+    sign = 1
+    for p in parts:
+        if p == '+': sign = 1
+        elif p == '-': sign = -1
+        elif 'd' in p:
+            try:
+                n_str, f_str = p.split('d')
+                n = int(n_str) if n_str else 1
+                f = int(f_str)
+                # On ne gère ici que l'addition simple de dés, 
+                # pour des formules complexes, on simplifie
+                nb_dice += n * sign # Attention: gestion simplifiée
+                faces = f 
+            except: pass
+        elif p.isdigit():
+            bonus += int(p) * sign
             
-            actor.start_turn()
-            
-            # Selection Cible Optimisée
-            is_pj = (actor.team == 'PJ')
-            targets = mon if is_pj else pj
-            active_targets = [e for e in targets if e.hp > 0]
-            
-            if not active_targets: break
-            
-            # Frontline logic
-            fronts = [e for e in active_targets if e.position == 'front']
-            valid = fronts if (actor.position=='front' and fronts) else active_targets
-            
-            # Sélection de la cible principale
-            target = actor.choisir_cible(valid)
-            if not target: continue
+    return (nb_dice, faces, bonus)
 
-            # Choix de l'action
-            action = actor.choisir_action(ac_m if is_pj else ac_pj)
+def roll_fast(dice_data):
+    """Exécute le jet à partir des données pré-parsées"""
+    n, f, b = dice_data
+    if n == 0: return b
+    # Optimisation mathématique : random.choices est parfois plus lent que la boucle simple sur petits nombres
+    # Sur gros volume, sum(random.randint) reste très correct en Python pur
+    return sum(random.randint(1, f) for _ in range(n)) + b
 
-            # AJOUTEZ CECI POUR DEBUGGER
-            if not action:
-                # On affiche un message seulement au tour 1 pour ne pas spammer
-                if rounds == 1 and log_enabled:
-                    msg(f"⚠️ {actor.nom} passe son tour (aucune action valide trouvée !)")
-                continue
+def roll_d20_fast(adv: int):
+    """ 1=Adv, -1=Disadv, 0=Normal """
+    r1 = random.randint(1, 20)
+    if adv == 0: return r1, False
+    r2 = random.randint(1, 20)
+    if adv == 1: return (r1 if r1 > r2 else r2), True
+    return (r1 if r1 < r2 else r2), True
 
-            # --- LOGIQUE AOE ---
-            targets_list = [target] # Par défaut, une seule cible
-            eff = action.get('parsed_effect')
-            if eff and eff.get('aoe'):
-                targets_list = [e for e in active_targets]
-                if log_enabled: msg(f"💥 {actor.nom} lance {action['nom']} sur {len(targets_list)} cibles !")
+# --- 2. TABLES DE PROGRESSION (Pre-computed) ---
+FULL_CASTER = [[2,0,0,0,0],[3,0,0,0,0],[4,2,0,0,0],[4,3,0,0,0],[4,3,2,0,0],[4,3,3,0,0],[4,3,3,1,0],[4,3,3,2,0],[4,3,3,3,1],[4,3,3,3,2]]
+HALF_CASTER = [[0,0,0,0,0],[2,0,0,0,0],[3,0,0,0,0],[3,0,0,0,0],[4,2,0,0,0],[4,2,0,0,0],[4,3,0,0,0],[4,3,0,0,0],[4,3,2,0,0],[4,3,2,0,0]]
 
-            # Pay Slot (une seule fois)
-            if action['level'] > 0 and is_pj:
-                actor.slots[min(4, action['level']-1)] -= 1
+def get_slots(classe, level):
+    idx = min(level, 10) - 1
+    if idx < 0: return [0]*5
+    if classe in ["Mage", "Clerc", "Druide", "Barde", "Ensorceleur"]: return list(FULL_CASTER[idx])
+    if classe in ["Paladin", "Rôdeur"]: return list(HALF_CASTER[idx])
+    if classe == "Sorcier": return [0,0,2,0,0] if level >= 5 else [0,2,0,0,0]
+    return [0]*5
 
-            # --- RÉSOLUTION POUR CHAQUE CIBLE ---
-            for t in targets_list:
-                if t.state == 'dead': continue
-                if t.hp <= 0 and t.state != 'downed':
-                    # Si c'est un monstre, on le tue définitivement pour éviter qu'il soit soigné
-                    if t.team == 'MONSTRE':
-                        t.hp = -1
-                        t.state = 'dead'
-                        if log_enabled: msg(f"💀 {t.nom} meurt définitivement.")
-                    else:
-                        t.hp = 0
-                        t.state = 'downed'
-                        if log_enabled: msg(f"☠️ {t.nom} tombe à terre (downed) !")
-                if t.state == 'downed' or t.state == 'stable':
-                    # Seul le soin peut relever
-                    if action['type_action'] == 'soin':
-                        heal = roll_fast(action['parsed_dice'])
-                        t.hp = min(t.hp+heal, t.hp_max)
-                        t.state = 'alive'
-                        t.death_saves_success = 0
-                        t.death_saves_fail = 0
-                        if log_enabled: msg(f"💚 {actor.nom} relève {t.nom} avec {heal} PV !")
-                        if eff and eff['type'].startswith('buff'):
-                            val_roll = roll_fast(eff['parsed_val'])
-                            t.effects.append({'type':eff['type'], 'val':val_roll, 'duration':eff.get('duration',10), 'conc':eff.get('conc',False)})
-                            if eff.get('conc'): t.concentrating_on = True
-                    continue
-                if action['type_action'] == 'soin':
-                    heal = roll_fast(action['parsed_dice'])
-                    actor.hp = min(actor.hp+heal, actor.hp_max)
-                    if log_enabled: msg(f"💚 {actor.nom} soigne {heal}.")
-                    if eff and eff['type'].startswith('buff'):
-                        val_roll = roll_fast(eff['parsed_val'])
-                        actor.effects.append({'type':eff['type'], 'val':val_roll, 'duration':eff.get('duration',10), 'conc':eff.get('conc',False)})
-                        if eff.get('conc'): actor.concentrating_on = True
-                else:
-                    adv = 0
-                    if actor.position == 'front':
-                        if t.has_condition('prone'): adv = 1
-                        if "Reckless Attack" in actor.feats: adv = 1
-                    hit = False; dmg = 0; crit = False
-                    if action['type_action'] == 'save':
-                        dc = 8 + actor.prof + actor.mods.get(action.get('save_stat','int'), 0)
-                        sv, _ = roll_d20_fast(0)
-                        if (sv + t.get_save_mod(action['save_stat'])) < dc:
-                            hit = True
-                            dmg = roll_fast(action['parsed_dice'])
-                            if log_enabled: msg(f"🔥 {t.nom} rate save vs {action['nom']}.")
-                    else:
-                        iter_attaques = actor.nb_attacks if action['type_action'] == 'attaque' else 1
-                        for i in range(iter_attaques):
-                            if t.hp <= 0: break
+# --- DB INIT ---
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    # Table actions mise à jour avec 'mastery'
+    c.execute('''CREATE TABLE IF NOT EXISTS actions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT, formule_degats TEXT, type_action TEXT, level INTEGER, save_stat TEXT, effect_json TEXT, mastery TEXT
+    )''')
+    # MIGRATION AUTOMATIQUE : On tente d'ajouter la colonne si elle manque
+    try:
+        c.execute("ALTER TABLE actions ADD COLUMN mastery TEXT")
+    except:
+        pass # La colonne existe déjà, tout va bien
 
-                            # --- LOGIQUE D&D 2024 ---
-                            # Gestion VEX (Avantage si la cible est marquée par Vex lors d'une attaque précédente)
-                            vex_active = getattr(actor, 'vex_target_id', None) == t.id
+    c.execute('''CREATE TABLE IF NOT EXISTS combattants (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT, type_entite TEXT, classe TEXT, niveau INTEGER,
+        force INTEGER, dexterite INTEGER, constitution INTEGER, intelligence INTEGER, sagesse INTEGER, charisme INTEGER,
+        hp_max INTEGER, ac INTEGER, actions_ids TEXT, features TEXT, position TEXT, behavior TEXT
+    )''')
+    conn.commit(); conn.close()
+init_db()
 
-                            has_adv = False
-                            has_dis = False
-                            if actor.position == 'front':
-                                if t.has_condition('prone'): has_adv = True
-                                if "Reckless Attack" in actor.feats: has_adv = True
-                                if t.has_condition('blinded'): has_adv = True
-                                if vex_active: has_adv = True # VEX donne l'avantage
+# --- MODELES ---
+class ActionModel(BaseModel):
+    id: Optional[int] = None
+    nom: str
+    formule: str
+    type_action: str
+    level: int = 0
+    save_stat: Optional[str] = None
+    effect_json: Optional[str] = None
+    mastery: Optional[str] = None  # Nouveau champ pour maîtrise / spécialisation
 
-                            if actor.has_condition('blinded'): has_dis = True
-                            
-                            adv = 0
-                            if has_adv and not has_dis: adv = 1
-                            elif has_dis and not has_adv: adv = -1
-                            
-                            # Consommation du Vex après le jet (qu'il touche ou non, l'avantage est utilisé pour ce jet)
-                            if vex_active: actor.vex_target_id = None
+class FighterModel(BaseModel):
+    id: Optional[int] = None
+    nom: str; type_entite: str; classe: str; niveau: int; stats: dict; hp_max: int; ac: int
+    actions_ids: List[int]; features: List[str]; position: str = "front"; behavior: str = "random"
 
-                            att = max(actor.mods.values()) + actor.prof
-                            if actor.use_gwm: att -= 5
-                            for e in actor.effects:
-                                if e['type'] == 'buff_atk': att += e['val']
-                                
-                            d20, has_adv_bool = roll_d20_fast(adv)
-                            crit = (d20 == 20)
-                            
-                            if crit or (d20 + att >= t.ac):
-                                # --- TOUCHÉ ---
-                                hit = True
-                                dmg = roll_fast(action['parsed_dice'])
-                                if crit:
-                                    n, f, _ = action['parsed_dice']
-                                    dmg += roll_fast((n, f, 0))
-                                
-                                if log_enabled: msg(f"⚔️ {actor.nom} touche ({d20}+{att}) ! Dégâts: {dmg}")
-                                t.hp -= dmg
-                                actor.total_dmg_done += dmg
-                                
-                                # MAITRISE: VEX (Si on touche et fait des dégâts, prochaine attaque a l'avantage)
-                                if action.get('mastery') == 'Vex':
-                                    actor.vex_target_id = t.id
-                                    if log_enabled: msg(f"   ✨ Vex ! {actor.nom} aura l'avantage au prochain coup.")
+class SimuRequest(BaseModel):
+    iterations: int; pj_ids: List[int]; monstre_ids: List[int]
 
-                                if t.check_concentration(dmg) and log_enabled: msg(f"⚠️ {t.nom} perd conc.")
-                                if eff and eff.get('target')=='enemy':
-                                    t.effects.append({'type':eff['type'], 'duration':eff.get('duration',1), 'val':0})
-                                    
-                            else:
-                                # --- RATÉ ---
-                                if log_enabled: msg(f"💨 {actor.nom} manque ({d20}+{att}).")
-                                
-                                # MAITRISE: GRAZE (Dégâts même si on rate)
-                                if action.get('mastery') == 'Graze':
-                                    # Le modificateur utilisé est généralement le plus haut (simplifié ici)
-                                    mod_dmg = max(actor.mods.values()) 
-                                    if mod_dmg > 0:
-                                        t.hp -= mod_dmg
-                                        actor.total_dmg_done += mod_dmg
-                                        if log_enabled: msg(f"   🩸 Graze ! L'éraflure inflige tout de même {mod_dmg} dégâts.")
-                # Check mort APRÈS la boucle d'attaques (ligne 169 originale)
-                if t.hp <= 0 and t.state == 'alive':
-                    # Si c'est un monstre, on le tue définitivement pour éviter qu'il soit soigné
-                    if t.team == 'MONSTRE':
-                        t.hp = -1
-                        t.state = 'dead'
-                        if log_enabled: msg(f"💀 {t.nom} meurt définitivement.")
-                    else:
-                        t.hp = 0
-                        t.state = 'downed'
-                        if log_enabled: msg(f"☠️ {t.nom} tombe à terre (downed) !")
-                if t.state == 'dead' and log_enabled:
-                    msg(f"💀 {t.nom} meurt définitivement.")
-
-    # Return stats
-    # CORRECTION : On ne gagne que si on est en vie ET que les ennemis sont morts
-    victoire = any(p.hp > 0 for p in pj) and not any(m.hp > 0 for m in mon)
-
-    return {
-        "victoire_pj": victoire,
-        "rounds": rounds,
-        "morts": sum(1 for p in pj if p.hp <= 0),
-        "log": log,
-        "dmg": {a.nom: a.total_dmg_done for a in pj}
-    }
-
-def process_parallel(payload):
-    # Lecture DB Optimisée (Dict Lookup)
-    conn = sqlite3.connect(DB_NAME); conn.row_factory=sqlite3.Row
-    # On charge les actions
-    actions_list = [dict(r) for r in conn.execute("SELECT * FROM actions").fetchall()]
-    act_map = {a['id']: a for a in actions_list}
-    # --- MODIFICATION GESTION QUANTITÉS ---
-    # 1. Récupérer les données UNIQUES depuis la DB pour éviter les doublons SQL
-    unique_pj_ids = list(set(payload.pj_ids))
-    unique_mon_ids = list(set(payload.monstre_ids))
-    pj_rows = []
-    if unique_pj_ids:
-        pj_rows = [dict(r) for r in conn.execute(f"SELECT * FROM combattants WHERE id IN ({','.join('?'*len(unique_pj_ids))})", unique_pj_ids).fetchall()]
-    mon_rows = []
-    if unique_mon_ids:
-        mon_rows = [dict(r) for r in conn.execute(f"SELECT * FROM combattants WHERE id IN ({','.join('?'*len(unique_mon_ids))})", unique_mon_ids).fetchall()]
-    conn.close()
-    # 2. Créer un dictionnaire pour accès rapide {id: data}
-    pj_map = {row['id']: row for row in pj_rows}
-    mon_map = {row['id']: row for row in mon_rows}
-    # 3. Reconstruire la liste complète avec les DUPLICATIONS demandées par le frontend
-    pjs = [pj_map[i] for i in payload.pj_ids if i in pj_map]
-    ms = [mon_map[i] for i in payload.monstre_ids if i in mon_map]
-    # --- FIN MODIFICATION ---
-    if not pjs or not ms: return {"error":"Vide"}
-    # Le reste de la fonction reste identique...
-    sample = simuler_bataille((pjs, ms, act_map, True))
-    with ProcessPoolExecutor() as exc:
-        results = list(exc.map(simuler_bataille, [(pjs, ms, act_map, False)] * (payload.iterations - 1)))
-    results.append(sample)
-    # Aggregation
-    total_dmg = {}
-    wins = 0
-    tot_rounds = 0
-    for r in results:
-        if r['victoire_pj']: wins += 1
-        tot_rounds += r['rounds']
-        if 'dmg' in r:
-            for k, v in r['dmg'].items():
-                total_dmg[k] = total_dmg.get(k, 0) + v
-    N = payload.iterations
-    return {
-        "win_rate": (wins / N) * 100,
-        "avg_rounds": tot_rounds / N,
-        "sample_log": sample['log'],
-        "dmg_distribution": {k: int(v/N) for k,v in total_dmg.items()}
-    }
-
-# --- ROUTES API ---
 @app.post("/api/action/save")
 def save_action(a: ActionModel):
     conn = sqlite3.connect(DB_NAME)
@@ -539,6 +433,241 @@ def save_fighter(f: FighterModel):
         conn.execute("INSERT INTO combattants (nom, type_entite, classe, niveau, force, dexterite, constitution, intelligence, sagesse, charisme, hp_max, ac, actions_ids, features, position, behavior) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (f.nom, f.type_entite, f.classe, f.niveau, f.stats['str'], f.stats['dex'], f.stats['con'], f.stats['int'], f.stats['wis'], f.stats['cha'], f.hp_max, f.ac, act_j, ft_j, f.position, f.behavior))
     conn.commit(); conn.close(); return "ok"
+
+# --- LOGIQUE SIMULATION ---
+class EntiteCombat:
+    __slots__ = ('id', 'nom', 'team', 'classe', 'lvl', 'stats', 'mods', 'hp', 'hp_max', 'base_ac', 
+                 'actions', 'feats', 'position', 'behavior', 'prof', 'slots', 'effects', 
+                 'concentrating_on', 'init_bonus', 'total_dmg_done', 'init', 'use_gwm', 
+                 'nb_attacks', 'state', 'death_saves_success', 'death_saves_fail', 'vex_target_id',
+                 'damage_taken', 'healing_done', 'crits_dealt', 'misses', 'kills', 'times_downed')
+
+    def __init__(self, data, actions_map):
+        self.id = data['id']
+        self.nom = data['nom']
+        self.team = data['type_entite'] # PJ ou MONSTRE
+        self.classe = data['classe']
+        self.lvl = data['niveau']
+        self.stats = {
+            'str': data['force'], 'dex': data['dexterite'], 'con': data['constitution'],
+            'int': data['intelligence'], 'wis': data['sagesse'], 'cha': data['charisme']
+        }
+        self.mods = {k: floor((v - 10) / 2) for k, v in self.stats.items()}
+        self.hp_max = data['hp_max']
+        self.hp = self.hp_max
+        self.base_ac = data['ac']
+        self.actions = []
+        if data['actions_ids']:
+            ids = json.loads(data['actions_ids'])
+            for i in ids:
+                if i in actions_map: self.actions.append(actions_map[i])
+        
+        self.feats = json.loads(data['features']) if data['features'] else []
+        self.position = data['position']
+        self.behavior = data['behavior']
+        
+        self.prof = 2 + floor((self.lvl - 1) / 4)
+        self.slots = get_slots(self.classe, self.lvl)
+        self.effects = []
+        self.concentrating_on = None
+        self.init_bonus = self.mods['dex']
+        if 'Initiative' in self.feats: self.init_bonus += 5
+        
+        self.total_dmg_done = 0
+        self.damage_taken = 0
+        self.healing_done = 0
+        self.crits_dealt = 0
+        self.misses = 0
+        self.kills = 0
+        self.times_downed = 0
+        self.init = 0
+        self.use_gwm = False
+        self.nb_attacks = 1
+        if self.lvl >= 5 and self.classe in ['Guerrier', 'Paladin', 'Rôdeur', 'Barbare']: self.nb_attacks = 2
+        if self.lvl >= 11 and self.classe == 'Guerrier': self.nb_attacks = 3
+        
+        self.state = "normal" # normal, prone, stunned, etc.
+        self.death_saves_success = 0
+        self.death_saves_fail = 0
+        self.vex_target_id = None
+
+    @property
+    def ac(self):
+        base = self.base_ac
+        # Shield spell logic could go here if tracked
+        return base
+
+    def roll_init(self):
+        r, _ = roll_d20_fast(0)
+        self.init = r + self.init_bonus
+
+def simuler_bataille(args):
+    pj_data, mon_data, actions_map = args
+    tous = [EntiteCombat(p, actions_map) for p in pj_data] + [EntiteCombat(m, actions_map) for m in mon_data]
+    
+    for c in tous: c.roll_init()
+    tous.sort(key=lambda x: x.init, reverse=True)
+    
+    rounds = 0
+    log = []
+    
+    while rounds < 20: # Limit rounds to prevent infinite loops
+        rounds += 1
+        pj_alive = [c for c in tous if c.team == 'PJ' and c.hp > 0]
+        mon_alive = [c for c in tous if c.team == 'MONSTRE' and c.hp > 0]
+        
+        if not pj_alive or not mon_alive: break
+        
+        for actor in tous:
+            if actor.hp <= 0: continue
+            
+            # Simple AI: Attack random enemy
+            enemies = [e for e in tous if e.team != actor.team and e.hp > 0]
+            if not enemies: break
+            
+            target = random.choice(enemies)
+            
+            # Choose action (simple: first available attack)
+            action = None
+            for a in actor.actions:
+                if a['type_action'] == 'attaque':
+                    action = a
+                    break
+            
+            if action:
+                # Attack Roll
+                adv = 0
+                d20, is_crit = roll_d20_fast(adv)
+                att_bonus = actor.mods['str'] + actor.prof # Simplified
+                
+                hit = False
+                crit = (d20 == 20)
+                
+                if crit or (d20 + att_bonus >= target.ac):
+                    hit = True
+                    if crit: actor.crits_dealt += 1
+                    
+                    # Damage Roll
+                    dice_data = parse_dice_string(action['formule_degats'])
+                    dmg = roll_fast(dice_data) + actor.mods['str']
+                    if crit: dmg += roll_fast(dice_data) # Crit adds dice
+                    
+                    target.hp -= dmg
+                    target.damage_taken += dmg
+                    actor.total_dmg_done += dmg
+                    
+                    if target.hp <= 0:
+                        actor.kills += 1
+                        target.times_downed += 1
+                    
+                    log.append(f"Round {rounds}: {actor.nom} attaque {target.nom} et inflige {dmg} dégâts.")
+                else:
+                    actor.misses += 1
+                    log.append(f"Round {rounds}: {actor.nom} rate {target.nom}.")
+            else:
+                 log.append(f"Round {rounds}: {actor.nom} ne fait rien.")
+
+    victoire = any(p.hp > 0 for p in tous if p.team == 'PJ') and not any(m.hp > 0 for m in tous if m.team == 'MONSTRE')
+    
+    return {
+        "victoire_pj": victoire,
+        "rounds": rounds,
+        "morts": sum(1 for p in tous if p.team == 'PJ' and p.hp <= 0),
+        "log": log,
+        "dmg": {a.nom: a.total_dmg_done for a in tous if a.team == 'PJ'},
+        "fighter_stats": {
+            f.nom: {
+                "hp_remaining": max(0, f.hp),
+                "survived": 1 if f.hp > 0 else 0,
+                "dmg_done": f.total_dmg_done,
+                "dmg_taken": f.damage_taken,
+                "healing_done": f.healing_done,
+                "crits_dealt": f.crits_dealt,
+                "misses": f.misses,
+                "kills": f.kills,
+                "times_downed": f.times_downed
+            } for f in tous
+        }
+    }
+
+def process_parallel(payload: SimuRequest):
+    conn = sqlite3.connect(DB_NAME); conn.row_factory = sqlite3.Row
+    pj_rows = [dict(r) for r in conn.execute(f"SELECT * FROM combattants WHERE id IN ({','.join(map(str, payload.pj_ids))})").fetchall()]
+    mon_rows = [dict(r) for r in conn.execute(f"SELECT * FROM combattants WHERE id IN ({','.join(map(str, payload.monstre_ids))})").fetchall()]
+    actions = {r['id']: dict(r) for r in conn.execute("SELECT * FROM actions").fetchall()}
+    conn.close()
+    
+    # Expand monsters if multiple IDs provided (already handled by frontend sending list of IDs)
+    # But we need to handle the case where we want multiple instances of same monster ID? 
+    # The frontend sends [id1, id1, id2] so we just need to map them.
+    
+    final_pj = []
+    for pid in payload.pj_ids:
+        for row in pj_rows:
+            if row['id'] == pid: final_pj.append(row); break
+            
+    final_mon = []
+    for mid in payload.monstre_ids:
+        for row in mon_rows:
+            if row['id'] == mid: final_mon.append(row); break
+            
+    args = (final_pj, final_mon, actions)
+    
+    with ProcessPoolExecutor() as executor:
+        results = list(executor.map(simuler_bataille, [args] * payload.iterations))
+        
+    # Aggregation
+    total_dmg = {}
+    wins = 0
+    tot_rounds = 0
+    agg_stats = {}
+    
+    sample = results[0] if results else {}
+    
+    for r in results:
+        if r['victoire_pj']: wins += 1
+        tot_rounds += r['rounds']
+        if 'dmg' in r:
+            for k, v in r['dmg'].items():
+                total_dmg[k] = total_dmg.get(k, 0) + v
+        
+        if 'fighter_stats' in r:
+            for nom, s in r['fighter_stats'].items():
+                if nom not in agg_stats:
+                    agg_stats[nom] = {"hp_remaining":0, "survived":0, "dmg_done":0, "dmg_taken":0, "healing_done":0, "crits_dealt":0, "misses":0, "kills":0, "times_downed":0}
+                agg_stats[nom]["hp_remaining"] += s["hp_remaining"]
+                agg_stats[nom]["survived"] += s["survived"]
+                agg_stats[nom]["dmg_done"] += s["dmg_done"]
+                agg_stats[nom]["dmg_taken"] += s["dmg_taken"]
+                agg_stats[nom]["healing_done"] += s["healing_done"]
+                agg_stats[nom]["crits_dealt"] += s["crits_dealt"]
+                agg_stats[nom]["misses"] += s["misses"]
+                agg_stats[nom]["kills"] += s["kills"]
+                agg_stats[nom]["times_downed"] += s["times_downed"]
+
+    N = payload.iterations if payload.iterations > 0 else 1
+    
+    final_stats = {}
+    for nom, s in agg_stats.items():
+        final_stats[nom] = {
+            "avg_hp": int(s["hp_remaining"] / N),
+            "survival_rate": int((s["survived"] / N) * 100),
+            "avg_dmg_done": int(s["dmg_done"] / N),
+            "avg_dmg_taken": int(s["dmg_taken"] / N),
+            "avg_healing_done": int(s["healing_done"] / N),
+            "avg_crits": round(s["crits_dealt"] / N, 2),
+            "avg_misses": round(s["misses"] / N, 2),
+            "avg_kills": round(s["kills"] / N, 2),
+            "avg_downed": round(s["times_downed"] / N, 2)
+        }
+
+    return {
+        "win_rate": (wins / N) * 100,
+        "avg_rounds": tot_rounds / N,
+        "sample_log": sample.get('log', []),
+        "dmg_distribution": {k: int(v/N) for k,v in total_dmg.items()},
+        "detailed_stats": final_stats
+    }
 
 @app.get("/api/action/list")
 def list_actions():
