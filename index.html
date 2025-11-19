@@ -2,193 +2,526 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>D&D Tactician - Editor Mode</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Architecte du Destin - D&D Sim</title>
+    
+    <!-- 1. LIBRAIRIES EXTERNES -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+
+    <!-- 2. POLICES D'ÉCRITURE IMMERSIVES -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
+
+    <!-- 3. CONFIGURATION TAILWIND & STYLE -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { 'fantasy': ['Cinzel', 'serif'], 'body': ['Lato', 'sans-serif'] },
+                    colors: { 
+                        'dnd-dark': '#0b0c10', 
+                        'dnd-panel': '#1f2833',
+                        'dnd-gold': '#c5a059', 
+                        'dnd-red': '#c0392b', 
+                        'dnd-blue': '#2980b9' 
+                    }
+                }
+            }
+        }
+    </script>
+
     <style>
-        /* Custom Scroll */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #111827; }
-        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
-        .fade-in { animation: fadeIn 0.2s ease-out; }
-        @keyframes fadeIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
+        body { 
+            background-color: #0b0c10; 
+            background-image: radial-gradient(circle at 50% 0, #1f2833, #0b0c10); 
+            color: #c1c8e4; 
+        }
+        
+        /* Scrollbar personnalisée */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0b0c10; }
+        ::-webkit-scrollbar-thumb { background: #45a29e; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #66fcf1; }
+
+        /* Styles UI RPG */
+        .rpg-panel {
+            background: rgba(31, 40, 51, 0.95);
+            border: 1px solid #45a29e;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+            border-radius: 0.5rem;
+            position: relative;
+        }
+        
+        .rpg-input {
+            background: #0b0c10;
+            border: 1px solid #2c3e50;
+            color: #e0e0e0;
+            transition: all 0.3s ease;
+            font-family: 'Lato', sans-serif;
+        }
+        .rpg-input:focus {
+            border-color: #c5a059;
+            box-shadow: 0 0 8px rgba(197, 160, 89, 0.2);
+            outline: none;
+        }
+
+        .nav-item.active {
+            border-left: 3px solid #66fcf1;
+            color: #66fcf1;
+            background: linear-gradient(90deg, rgba(69, 162, 158, 0.15), transparent);
+        }
+
+        .fade-in { animation: fadeIn 0.3s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .search-result {
+            padding: 8px; border-bottom: 1px solid #333; cursor: pointer; transition: background 0.2s;
+        }
+        .search-result:hover { background: #45a29e; color: #0b0c10; font-weight: bold; }
     </style>
 </head>
-<body class="bg-gray-900 text-gray-300 font-sans h-screen flex overflow-hidden">
+<body class="h-screen flex overflow-hidden font-body selection:bg-dnd-red selection:text-white">
 
-    <!-- SIDEBAR -->
-    <div class="w-64 bg-gray-800 border-r border-gray-700 flex flex-col z-20 shadow-2xl">
-        <div class="p-6 text-center border-b border-gray-700">
-            <h1 class="text-2xl font-bold text-white"><i class="fas fa-dragon text-purple-500 mr-2"></i>Tactician</h1>
+    <!-- BARRE LATÉRALE -->
+    <div class="w-72 bg-black/80 backdrop-blur-md border-r border-gray-800 flex flex-col z-20 shadow-2xl relative">
+        <div class="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/leather.png')] opacity-20 pointer-events-none"></div>
+        
+        <div class="p-8 text-center border-b border-gray-800 relative z-10">
+            <h1 class="text-3xl font-fantasy font-bold text-transparent bg-clip-text bg-gradient-to-b from-dnd-gold to-yellow-800 drop-shadow-sm">
+                <i class="fas fa-dragon mr-2"></i>Simulacrum
+            </h1>
+            <p class="text-xs text-gray-500 mt-2 font-fantasy tracking-widest uppercase">V9.0 Ultimate</p>
         </div>
-        <nav class="flex-1 p-4 space-y-2">
-            <button onclick="nav('tab-actions')" class="nav-btn w-full text-left px-4 py-3 rounded hover:bg-gray-700 text-gray-400 transition"><i class="fas fa-scroll mr-3"></i> Grimoire</button>
-            <button onclick="nav('tab-pj')" class="nav-btn w-full text-left px-4 py-3 rounded hover:bg-gray-700 text-gray-400 transition"><i class="fas fa-user-shield mr-3"></i> Héros</button>
-            <button onclick="nav('tab-monstre')" class="nav-btn w-full text-left px-4 py-3 rounded hover:bg-gray-700 text-gray-400 transition"><i class="fas fa-skull mr-3"></i> Monstres</button>
-            <button onclick="nav('tab-simu')" class="nav-btn w-full text-left px-4 py-3 rounded hover:bg-gray-700 text-gray-400 transition"><i class="fas fa-chart-pie mr-3"></i> Simulation</button>
+        
+        <nav class="flex-1 p-4 space-y-2 relative z-10 overflow-y-auto">
+            <button onclick="nav('tab-actions')" id="nav-act" class="nav-item w-full text-left px-6 py-4 rounded mb-2 flex items-center group hover:bg-white/5 transition-all">
+                <i class="fas fa-scroll w-6 group-hover:text-dnd-gold"></i> <span class="font-bold ml-2">Grimoire</span>
+            </button>
+            <button onclick="nav('tab-pj')" id="nav-pj" class="nav-item w-full text-left px-6 py-4 rounded mb-2 flex items-center group hover:bg-white/5 transition-all">
+                <i class="fas fa-helmet-safety w-6 group-hover:text-blue-400"></i> <span class="font-bold ml-2">Héros (PJ)</span>
+            </button>
+            <button onclick="nav('tab-monstre')" id="nav-mon" class="nav-item w-full text-left px-6 py-4 rounded mb-2 flex items-center group hover:bg-white/5 transition-all">
+                <i class="fas fa-skull-crossbones w-6 group-hover:text-red-500"></i> <span class="font-bold ml-2">Bestiaire</span>
+            </button>
+            <button onclick="nav('tab-simu')" id="nav-sim" class="nav-item w-full text-left px-6 py-4 rounded mb-2 flex items-center group hover:bg-white/5 transition-all">
+                <i class="fas fa-dice-d20 w-6 group-hover:text-purple-400"></i> <span class="font-bold ml-2">Arène</span>
+            </button>
         </nav>
     </div>
 
-    <!-- CONTENT -->
+    <!-- CONTENU PRINCIPAL -->
     <div class="flex-1 overflow-y-auto p-8 relative">
         
-        <!-- TAB: ACTIONS -->
-        <div id="tab-actions" class="content hidden fade-in">
-            <h2 class="text-2xl font-bold text-purple-400 mb-6">Éditeur de Sorts & Armes</h2>
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <!-- FORM -->
-                <div class="lg:col-span-1 bg-gray-800 p-6 rounded-xl border border-gray-700 h-fit sticky top-4">
-                    <input type="hidden" id="act_id"> <!-- ID CACHÉ POUR UPDATE -->
+        <!-- 1. ONGLET ACTIONS & SORTS -->
+        <div id="tab-actions" class="content hidden fade-in max-w-6xl mx-auto">
+            <div class="flex items-center justify-between mb-8 border-b border-gray-800 pb-4">
+                <h2 class="text-4xl font-fantasy text-dnd-gold">Forge Arcanique</h2>
+                <button onclick="toggleSearch('spell_search_box')" class="bg-purple-900/40 text-purple-300 px-4 py-2 rounded border border-purple-500/50 hover:bg-purple-800 transition font-fantasy text-sm">
+                    <i class="fas fa-search mr-2"></i> Import Open5e
+                </button>
+            </div>
+            
+            <!-- Moteur de Recherche de Sorts -->
+            <div id="spell_search_box" class="hidden mb-6 bg-black p-4 rounded border border-purple-500 shadow-glow">
+                <div class="flex gap-2">
+                    <input id="spell_query" class="rpg-input w-full p-2 rounded" placeholder="Nom anglais du sort (ex: Fireball)..." onkeyup="if(event.key==='Enter') searchSpells()">
+                    <button onclick="searchSpells()" class="bg-purple-600 px-6 rounded text-white font-bold hover:bg-purple-500">Chercher</button>
+                </div>
+                <div id="spell_results" class="mt-2 max-h-60 overflow-y-auto bg-gray-900 border border-gray-700 hidden rounded"></div>
+            </div>
+            
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                <!-- Formulaire d'édition -->
+                <div class="lg:col-span-5 rpg-panel p-6 h-fit sticky top-4">
+                    <input type="hidden" id="act_id"> <!-- ID caché pour le mode édition -->
                     
-                    <div class="space-y-4">
-                        <div><label class="lbl">Nom</label><input id="act_nom" class="inp" placeholder="Ex: Épée longue"></div>
-                        <div class="flex gap-2">
-                            <div class="w-1/3"><label class="lbl">Niveau</label><input type="number" id="act_lvl" value="0" class="inp text-center"></div>
-                            <div class="w-2/3"><label class="lbl">Dégâts</label><input id="act_dice" class="inp" placeholder="1d8"></div>
+                    <div class="space-y-5">
+                        <div>
+                            <label class="text-xs font-bold text-dnd-gold uppercase tracking-wider">Nom de l'Action</label>
+                            <input id="act_nom" class="rpg-input w-full p-2 rounded text-lg font-bold text-white placeholder-gray-700" placeholder="Ex: Épée Longue">
                         </div>
-                        <div><label class="lbl">Type</label>
-                            <select id="act_type" onchange="uiEff()" class="inp"><option value="attaque">Attaque</option><option value="save">Sauvegarde</option><option value="soin">Soin / Buff</option></select>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="text-xs font-bold text-gray-400 uppercase">Niveau (0=Atk)</label>
+                                <input type="number" id="act_lvl" value="0" class="rpg-input w-full p-2 rounded text-center">
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-gray-400 uppercase">Dégâts / Soin</label>
+                                <input id="act_dice" class="rpg-input w-full p-2 rounded font-mono text-yellow-500" placeholder="1d8+3">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-gray-400 uppercase">Type d'Action</label>
+                            <select id="act_type" onchange="uiEff()" class="rpg-input w-full p-2 rounded">
+                                <option value="attaque">⚔️ Attaque (vs CA)</option>
+                                <option value="save">🛡️ Sauvegarde (vs DC)</option>
+                                <option value="soin">💖 Soin / Buff</option>
+                            </select>
                         </div>
                         
-                        <div id="save_ui" class="hidden bg-gray-900 p-3 rounded border border-gray-600">
-                            <label class="lbl text-blue-400">Stat de Save</label>
-                            <select id="act_save" class="inp"><option value="dex">DEX</option><option value="con">CON</option><option value="wis">WIS</option></select>
+                        <!-- Configuration Sauvegarde -->
+                        <div id="save_ui" class="hidden bg-black/30 p-3 rounded border border-dashed border-gray-600">
+                            <label class="text-xs font-bold text-blue-400 uppercase">Statistique Cible</label>
+                            <select id="act_save" class="rpg-input w-full p-1 text-sm rounded">
+                                <option value="dex">Dextérité (Explosions)</option>
+                                <option value="con">Constitution (Poison)</option>
+                                <option value="wis">Sagesse (Mental)</option>
+                                <option value="str">Force</option>
+                            </select>
+                        </div>
+                        
+                        <!-- Toggle Effets -->
+                        <div class="pt-2">
+                            <label class="flex items-center cursor-pointer group select-none">
+                                <input type="checkbox" id="has_eff" onchange="uiEff()" class="w-4 h-4 bg-gray-900 border-gray-600 rounded text-dnd-gold focus:ring-0">
+                                <span class="ml-2 text-sm text-gray-300 group-hover:text-white transition-colors">Ajouter un Effet Spécial</span>
+                            </label>
                         </div>
 
-                        <div><label class="flex items-center cursor-pointer"><input type="checkbox" id="has_eff" onchange="uiEff()" class="mr-2"> Ajouter Effet</label></div>
-                        <div id="eff_ui" class="hidden bg-gray-900 p-3 rounded border border-gray-600 space-y-2">
-                            <select id="eff_type" class="inp"><option value="buff_atk">Buff Atk</option><option value="buff_ac">Buff CA</option><option value="prone">Debuff: À terre</option></select>
-                            <select id="eff_tgt" class="inp"><option value="self">Sur Soi</option><option value="enemy">Sur Ennemi</option></select>
-                            <div class="flex gap-2"><input id="eff_val" placeholder="Val" class="inp"><input id="eff_dur" value="10" class="inp"></div>
-                            <label class="flex items-center text-xs"><input type="checkbox" id="eff_conc" class="mr-1"> Concentration</label>
+                        <!-- Configuration Effets -->
+                        <div id="eff_ui" class="hidden bg-purple-900/20 p-4 rounded border border-purple-500/30 space-y-3">
+                            <div class="grid grid-cols-2 gap-3">
+                                <select id="eff_type" class="rpg-input w-full text-sm p-1 rounded">
+                                    <option value="buff_atk">Buff Attaque</option>
+                                    <option value="buff_ac">Buff CA</option>
+                                    <option value="prone">État: À terre</option>
+                                    <option value="blinded">État: Aveuglé</option>
+                                </select>
+                                <select id="eff_tgt" class="rpg-input w-full text-sm p-1 rounded">
+                                    <option value="self">Sur Soi / Allié</option>
+                                    <option value="enemy">Sur Ennemi</option>
+                                </select>
+                            </div>
+                            <div class="grid grid-cols-3 gap-2">
+                                <input id="eff_val" placeholder="1d4" class="rpg-input w-full text-sm p-1 rounded text-center">
+                                <input type="number" id="eff_dur" value="10" class="rpg-input w-full text-sm p-1 rounded text-center" title="Durée (tours)">
+                                <label class="flex items-center justify-center text-xs text-purple-300 border border-purple-500/30 rounded bg-black/20 cursor-pointer">
+                                    <input type="checkbox" id="eff_conc" class="mr-1"> Conc.
+                                </label>
+                            </div>
                         </div>
-                        
-                        <div class="flex gap-2 pt-2">
-                            <button id="btn_cancel_act" onclick="resetForm('act')" class="hidden w-1/3 bg-gray-600 hover:bg-gray-500 text-white rounded py-2">Annuler</button>
-                            <button id="btn_save_act" onclick="saveAct()" class="flex-1 bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 rounded transition">Créer</button>
+
+                        <!-- Boutons Action -->
+                        <div class="flex gap-3 pt-4">
+                            <button id="btn_cancel_act" onclick="resetForm('act')" class="hidden w-1/3 bg-gray-700 hover:bg-gray-600 text-white rounded font-fantasy transition-colors">Annuler</button>
+                            <button id="btn_save_act" onclick="saveAct()" class="flex-1 bg-gradient-to-r from-dnd-red to-purple-900 hover:from-dnd-red hover:to-purple-700 text-white text-lg py-2 rounded shadow-lg font-fantasy tracking-wider transition-transform transform hover:scale-[1.02]">
+                                Inscrire le Sort
+                            </button>
                         </div>
                     </div>
                 </div>
-
-                <!-- LIST -->
-                <div class="lg:col-span-2">
-                    <p class="text-xs text-gray-500 mb-2 uppercase font-bold">Cliquez sur une carte pour modifier</p>
-                    <div id="list-act" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
+                
+                <!-- Liste des Actions -->
+                <div class="lg:col-span-7">
+                    <div id="list-act" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                        <!-- Rempli par JS -->
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- TAB: PJ -->
-        <div id="tab-pj" class="content hidden fade-in">
-            <h2 class="text-2xl font-bold text-blue-400 mb-6">Éditeur de Héros</h2>
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div class="lg:col-span-1 bg-gray-800 p-6 rounded-xl border border-gray-700 h-fit sticky top-4">
+        <!-- 2. ONGLET PERSONNAGES (PJ) -->
+        <div id="tab-pj" class="content hidden fade-in max-w-6xl mx-auto">
+            <h2 class="text-4xl font-fantasy text-blue-400 mb-8 border-b border-gray-800 pb-4">Hall des Héros</h2>
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                <div class="lg:col-span-5 rpg-panel p-6 h-fit sticky top-4 border-blue-500/30">
                     <input type="hidden" id="pj_id">
-                    <div class="space-y-3">
-                        <input id="pj_nom" class="inp font-bold text-lg" placeholder="Nom du Héros">
-                        <div class="flex gap-2"><select id="pj_cls" class="inp"><option value="Guerrier">Guerrier</option><option value="Mage">Mage</option><option value="Paladin">Paladin</option></select><input type="number" id="pj_lvl" value="5" class="inp w-16 text-center"></div>
-                        <select id="pj_pos" class="inp"><option value="front">Frontline (CaC)</option><option value="back">Backline (Dist)</option></select>
+                    <div class="space-y-4">
+                        <input id="pj_nom" class="rpg-input w-full p-3 text-xl font-bold text-blue-100 bg-blue-900/10 border-blue-500/50 rounded" placeholder="Nom du Héros">
                         
-                        <div class="grid grid-cols-6 gap-1 bg-gray-900 p-2 rounded border border-gray-600" id="pj_stats"></div>
+                        <div class="flex gap-2">
+                            <select id="pj_cls" class="rpg-input flex-1 p-2 rounded">
+                                <option value="Guerrier">Guerrier</option><option value="Mage">Magicien</option><option value="Paladin">Paladin</option><option value="Clerc">Clerc</option><option value="Barbare">Barbare</option><option value="Roublard">Roublard</option>
+                            </select>
+                            <input type="number" id="pj_lvl" value="5" class="rpg-input w-20 text-center p-2 rounded font-bold text-blue-400" title="Niveau">
+                        </div>
+                        
+                        <select id="pj_pos" class="rpg-input w-full p-2 rounded text-sm text-gray-400">
+                            <option value="front">🛡️ Frontline (Corps-à-corps)</option>
+                            <option value="back">🏹 Backline (Distance)</option>
+                        </select>
+                        
+                        <div class="grid grid-cols-6 gap-1 bg-black/40 p-3 rounded border border-gray-700" id="pj_stats"></div>
                         
                         <div class="border-t border-gray-700 pt-3">
-                            <p class="lbl mb-1">Dons</p>
-                            <div class="flex flex-wrap gap-2 text-xs">
-                                <label><input type="checkbox" class="pj-feat mr-1" value="Great Weapon Master"> GWM</label>
-                                <label><input type="checkbox" class="pj-feat mr-1" value="Sharpshooter"> Sharp</label>
-                                <label><input type="checkbox" class="pj-feat mr-1" value="War Caster"> WarCast</label>
+                            <p class="text-[10px] font-bold text-gray-500 uppercase mb-2">Dons & Maîtrises</p>
+                            <div class="flex flex-wrap gap-2">
+                                <label class="cursor-pointer text-xs"><input type="checkbox" class="pj-feat hidden" value="Great Weapon Master"><span class="px-2 py-1 border border-gray-600 rounded text-gray-400 hover:border-gray-300">GWM</span></label>
+                                <label class="cursor-pointer text-xs"><input type="checkbox" class="pj-feat hidden" value="Sharpshooter"><span class="px-2 py-1 border border-gray-600 rounded text-gray-400 hover:border-gray-300">Sharp</span></label>
+                                <label class="cursor-pointer text-xs"><input type="checkbox" class="pj-feat hidden" value="War Caster"><span class="px-2 py-1 border border-gray-600 rounded text-gray-400 hover:border-gray-300">WarCast</span></label>
+                                <label class="cursor-pointer text-xs"><input type="checkbox" class="pj-feat hidden" value="Reckless Attack"><span class="px-2 py-1 border border-gray-600 rounded text-gray-400 hover:border-gray-300">Reckless</span></label>
                             </div>
                         </div>
                         
-                        <div class="h-32 overflow-y-auto bg-gray-900 p-2 rounded border border-gray-600"><div id="pj_act_chk" class="space-y-1"></div></div>
-                        <div class="flex gap-2"><input id="pj_hp" placeholder="PV" class="inp"><input id="pj_ac" placeholder="AC" class="inp"></div>
+                        <div class="h-40 overflow-y-auto bg-black/20 p-2 rounded border border-gray-700">
+                            <p class="text-[10px] font-bold text-gray-500 uppercase mb-2 sticky top-0 bg-[#16191d] py-1 z-10">Actions Connues</p>
+                            <div id="pj_act_chk" class="space-y-1"></div>
+                        </div>
+
+                        <div class="flex gap-4">
+                            <input id="pj_hp" placeholder="PV Max" class="rpg-input w-1/2 p-2 text-center font-bold text-red-400">
+                            <input id="pj_ac" placeholder="CA" class="rpg-input w-1/2 p-2 text-center font-bold text-gray-300">
+                        </div>
                         
                         <div class="flex gap-2 pt-2">
-                            <button id="btn_cancel_pj" onclick="resetForm('pj')" class="hidden w-1/3 bg-gray-600 text-white rounded py-2">Annuler</button>
-                            <button id="btn_save_pj" onclick="saveF('PJ')" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded">Sauvegarder</button>
+                            <button id="btn_cancel_pj" onclick="resetForm('pj')" class="hidden w-1/3 bg-gray-700 text-white rounded font-fantasy">Retour</button>
+                            <button id="btn_save_pj" onclick="saveF('PJ')" class="flex-1 bg-blue-700 hover:bg-blue-600 border border-blue-500 text-white font-fantasy py-2 rounded shadow-lg transition-all">Enrôler le Héros</button>
                         </div>
                     </div>
                 </div>
-                <div class="lg:col-span-2" id="list-pj"></div>
+                <div class="lg:col-span-7" id="list-pj"></div>
             </div>
         </div>
 
-        <!-- TAB: MONSTRE -->
-        <div id="tab-monstre" class="content hidden fade-in">
-            <h2 class="text-2xl font-bold text-red-400 mb-6">Bestiaire</h2>
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div class="lg:col-span-1 bg-gray-800 p-6 rounded-xl border border-gray-700 h-fit sticky top-4">
+        <!-- 3. ONGLET MONSTRES -->
+        <div id="tab-monstre" class="content hidden fade-in max-w-6xl mx-auto">
+            <div class="flex items-center justify-between mb-8 border-b border-gray-800 pb-4">
+                <h2 class="text-4xl font-fantasy text-dnd-red">Antre des Monstres</h2>
+                <button onclick="toggleSearch('mon_search_box')" class="bg-red-900/40 text-red-300 px-4 py-2 rounded border border-red-500/50 hover:bg-red-800 transition font-fantasy text-sm">
+                    <i class="fas fa-search mr-2"></i> Bestiaire Open5e
+                </button>
+            </div>
+
+            <!-- Recherche Monstre Open5e -->
+            <div id="mon_search_box" class="hidden mb-6 bg-black p-4 rounded border border-red-500 shadow-glow-red">
+                <div class="flex gap-2">
+                    <input id="mon_query" class="rpg-input w-full p-2 rounded" placeholder="Nom du monstre (en anglais, ex: Goblin)..." onkeyup="if(event.key==='Enter') searchMonster()">
+                    <button onclick="searchMonster()" class="bg-red-700 px-6 rounded text-white font-bold hover:bg-red-600">Chercher</button>
+                </div>
+                <div id="mon_results" class="mt-2 max-h-60 overflow-y-auto bg-gray-900 border border-gray-700 hidden rounded"></div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                <div class="lg:col-span-5 rpg-panel p-6 h-fit sticky top-4 border-red-900/50">
                     <input type="hidden" id="m_id">
-                    <div class="space-y-3">
-                        <input id="m_nom" class="inp font-bold text-lg" placeholder="Nom Monstre">
-                        <div class="flex gap-2"><input id="m_lvl" class="inp" placeholder="CR"><select id="m_beh" class="inp"><option value="random">Random</option><option value="focus_low_hp">Tueur</option></select></div>
-                        <select id="m_pos" class="inp"><option value="front">Frontline</option><option value="back">Backline</option></select>
-                        <div class="grid grid-cols-6 gap-1 bg-gray-900 p-2 rounded" id="m_stats"></div>
-                        <div class="h-32 overflow-y-auto bg-gray-900 p-2 rounded"><div id="m_act_chk"></div></div>
-                        <div class="flex gap-2"><input id="m_hp" placeholder="PV" class="inp"><input id="m_ac" placeholder="AC" class="inp"></div>
+                    <div class="space-y-4">
+                        <input id="m_nom" class="rpg-input w-full p-3 text-xl font-bold text-red-100 bg-red-900/10 border-red-500/50 rounded" placeholder="Nom de la Créature">
+                        
+                        <div class="flex gap-2">
+                            <input id="m_lvl" class="rpg-input w-20 text-center p-2 rounded" placeholder="CR">
+                            <select id="m_beh" class="rpg-input flex-1 p-2 rounded text-red-300">
+                                <option value="random">🧠 Bête (Aléatoire)</option>
+                                <option value="focus_low_hp">🩸 Prédateur (Focus Low HP)</option>
+                                <option value="focus_backline">🗡️ Assassin (Focus Arrière)</option>
+                            </select>
+                        </div>
+                        <select id="m_pos" class="rpg-input w-full p-2 rounded"><option value="front">Frontline</option><option value="back">Backline</option></select>
+
+                        <div class="grid grid-cols-6 gap-1 bg-black/40 p-3 rounded border border-gray-700" id="m_stats"></div>
+                        <div class="h-32 overflow-y-auto bg-black/20 p-2 rounded border border-gray-700"><div id="m_act_chk" class="space-y-1"></div></div>
+                        
+                        <div class="flex gap-4">
+                            <input id="m_hp" placeholder="PV" class="rpg-input w-1/2 p-2 text-center font-bold text-red-500">
+                            <input id="m_ac" placeholder="CA" class="rpg-input w-1/2 p-2 text-center font-bold">
+                        </div>
+                        
                         <div class="flex gap-2 pt-2">
-                            <button id="btn_cancel_m" onclick="resetForm('m')" class="hidden w-1/3 bg-gray-600 text-white rounded">Annuler</button>
-                            <button id="btn_save_m" onclick="saveF('MONSTRE')" class="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded">Sauvegarder</button>
+                            <button id="btn_cancel_m" onclick="resetForm('m')" class="hidden w-1/3 bg-gray-700 text-white rounded font-fantasy">Retour</button>
+                            <button id="btn_save_m" onclick="saveF('MONSTRE')" class="flex-1 bg-red-800 hover:bg-red-700 border border-red-600 text-white font-fantasy py-2 rounded shadow-glow transition-all">Invoquer</button>
                         </div>
                     </div>
                 </div>
-                <div class="lg:col-span-2" id="list-m"></div>
+                <div class="lg:col-span-7" id="list-m"></div>
             </div>
         </div>
 
-        <!-- TAB: SIMU -->
-        <div id="tab-simu" class="content hidden fade-in">
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
-                <div class="bg-gray-800 p-4 rounded border border-gray-700 flex flex-col">
-                    <h3 class="text-blue-400 font-bold mb-2">Héros</h3><div id="sim_pj" class="flex-1 overflow-y-auto bg-gray-900 p-2 rounded mb-4"></div>
-                    <h3 class="text-red-400 font-bold mb-2">Monstres</h3><div id="sim_m" class="flex-1 overflow-y-auto bg-gray-900 p-2 rounded mb-4"></div>
-                    <button onclick="runSim()" class="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded">LANCER LA SIMULATION</button>
-                </div>
-                <div class="col-span-2 flex flex-col gap-4">
-                    <div id="res_panel" class="hidden bg-gray-800 p-4 rounded border border-gray-700 flex justify-between items-center">
-                        <div class="text-center"><p class="text-gray-400 text-xs uppercase">Victoire</p><h1 id="res_win" class="text-5xl font-black text-blue-500">--%</h1></div>
-                        <div class="h-32 w-32"><canvas id="dmgChart"></canvas></div>
+        <!-- 4. ONGLET SIMULATION -->
+        <div id="tab-simu" class="content hidden fade-in max-w-7xl mx-auto h-full pb-20">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 h-full">
+                <!-- Configuration -->
+                <div class="lg:col-span-1 rpg-panel p-5 flex flex-col h-[80vh]">
+                    <h3 class="text-dnd-blue font-fantasy text-xl mb-4 border-b border-gray-700 pb-2">Forces du Bien</h3>
+                    <div id="sim_pj" class="flex-1 overflow-y-auto bg-black/20 p-2 rounded mb-4 border border-gray-800 custom-scroll"></div>
+                    
+                    <h3 class="text-dnd-red font-fantasy text-xl mb-4 border-b border-gray-700 pb-2">Forces du Mal</h3>
+                    <div id="sim_m" class="flex-1 overflow-y-auto bg-black/20 p-2 rounded mb-4 border border-gray-800 custom-scroll"></div>
+                    
+                    <div class="mt-auto pt-4 border-t border-gray-700 flex items-center gap-3">
+                        <div class="relative">
+                            <input id="iter" value="1000" class="rpg-input w-24 text-center p-3 rounded font-bold text-lg">
+                            <span class="absolute -top-2 left-2 bg-[#1f2833] text-[10px] px-1 text-gray-500 uppercase">Simulations</span>
+                        </div>
+                        <button onclick="runSim()" class="flex-1 bg-green-700 hover:bg-green-600 text-white font-fantasy text-xl py-3 rounded shadow-lg hover:shadow-glow transition-all border border-green-500">
+                            COMBATTRE !
+                        </button>
                     </div>
-                    <div class="flex-1 bg-black p-4 rounded border border-gray-700 font-mono text-sm text-green-400 overflow-y-auto" id="log_area"></div>
+                </div>
+
+                <!-- Résultats -->
+                <div class="lg:col-span-2 flex flex-col gap-6 h-[80vh]">
+                    <!-- Panneau Stats -->
+                    <div id="res_panel" class="hidden bg-gradient-to-r from-[#1f2833] to-[#111] p-6 rounded-lg border border-dnd-gold flex justify-between items-center shadow-glow relative overflow-hidden">
+                        <div class="absolute top-0 left-0 w-1 h-full bg-dnd-gold"></div>
+                        <div class="text-center z-10">
+                            <p class="text-gray-400 text-sm font-fantasy tracking-widest mb-2">TAUX DE VICTOIRE HÉROÏQUE</p>
+                            <h1 id="res_win" class="text-6xl font-fantasy font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-gray-400 drop-shadow-lg">--%</h1>
+                        </div>
+                        <div class="h-40 w-40 z-10">
+                            <canvas id="dmgChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Journal de Combat -->
+                    <div class="flex-1 bg-[#0a0a0a] p-4 rounded-lg border border-gray-800 font-mono text-sm text-green-500 overflow-y-auto shadow-inner relative" id="log_area">
+                        <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-gray-700 text-center">
+                            <i class="fas fa-book-dead text-4xl mb-2"></i>
+                            <p>En attente de données de combat...</p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
+    <!-- NOTIFICATION FLOTTANTE -->
+    <div id="toast" class="fixed bottom-8 right-8 bg-gray-900 border border-dnd-gold text-dnd-gold px-6 py-4 rounded shadow-2xl transform translate-y-20 opacity-0 transition-all duration-500 z-50 flex items-center gap-3 font-fantasy">
+        <i class="fas fa-check-circle text-xl"></i>
+        <span id="toast-msg">Opération réussie</span>
+    </div>
+
     <script>
-        const STATS = ['str','dex','con','int','wis','cha']; let myChart = null;
-        
-        // --- UI HELPERS ---
+        // --- CONFIGURATION & VARIABLES ---
+        const STATS = ['str','dex','con','int','wis','cha'];
+        let myChart = null;
+        // API Proxy pour éviter CORS si possible, sinon direct
+        const API_MONSTER = "https://api.open5e.com/monsters/?search=";
+        const API_SPELL = "https://api.open5e.com/spells/?search=";
+
+        // --- NAVIGATION ---
         function nav(id) {
-            document.querySelectorAll('.content').forEach(c=>c.classList.add('hidden'));
+            document.querySelectorAll('.content').forEach(c => c.classList.add('hidden'));
             document.getElementById(id).classList.remove('hidden');
-            document.querySelectorAll('.nav-btn').forEach(b=>b.classList.replace('bg-gray-700','hover:bg-gray-700')); 
-            document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('text-white'));
-            event.currentTarget.classList.add('bg-gray-700','text-white');
+            document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+            
+            const map = {'tab-actions':'nav-act', 'tab-pj':'nav-pj', 'tab-monstre':'nav-mon', 'tab-simu':'nav-sim'};
+            document.getElementById(map[id]).classList.add('active');
+
             if(id==='tab-actions') loadActs();
             if(id==='tab-pj') { renderStats('pj'); loadChk('pj_act_chk'); loadList('PJ','list-pj'); }
             if(id==='tab-monstre') { renderStats('m'); loadChk('m_act_chk'); loadList('MONSTRE','list-m'); }
             if(id==='tab-simu') loadSimChk();
         }
 
+        function toggleSearch(id) { document.getElementById(id).classList.toggle('hidden'); }
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            document.getElementById('toast-msg').innerText = msg;
+            t.classList.remove('translate-y-20', 'opacity-0');
+            setTimeout(() => t.classList.add('translate-y-20', 'opacity-0'), 3000);
+        }
+
+        // --- INTEGRATION OPEN5E ---
+        
+        // 1. Sorts
+        async function searchSpells() {
+            const q = document.getElementById('spell_query').value;
+            if(!q) return;
+            const res = await fetch(API_SPELL + q);
+            const data = await res.json();
+            const div = document.getElementById('spell_results');
+            div.classList.remove('hidden');
+            div.innerHTML = data.results.slice(0, 10).map(s => 
+                `<div onclick='importSpell(${JSON.stringify(s).replace(/'/g, "&#39;")})' class="search-result">${s.name} (Lvl ${s.level_int})</div>`
+            ).join('');
+        }
+
+        function importSpell(s) {
+            document.getElementById('act_nom').value = s.name;
+            document.getElementById('act_lvl').value = s.level_int || 0;
+            // Extraction Regex pour les dégâts (ex: "8d6")
+            const dmgMatch = s.desc.match(/(\d+d\d+(\s*\+\s*\d+)?)/);
+            document.getElementById('act_dice').value = dmgMatch ? dmgMatch[0] : "";
+            
+            // Deviner le type
+            let type = "attaque";
+            let save = null;
+            if(s.desc.toLowerCase().includes("saving throw")) {
+                type = "save";
+                if(s.desc.includes("Dexterity")) save = "dex";
+                else if(s.desc.includes("Constitution")) save = "con";
+                else if(s.desc.includes("Wisdom")) save = "wis";
+                else if(s.desc.includes("Strength")) save = "str";
+            }
+            if(s.desc.toLowerCase().includes("regain hit points")) type = "soin";
+
+            document.getElementById('act_type').value = type;
+            if(save) document.getElementById('act_save').value = save;
+            
+            uiEff();
+            document.getElementById('spell_results').classList.add('hidden');
+            toggleSearch('spell_search_box');
+            showToast("Données du sort chargées");
+        }
+
+        // 2. Monstres
+        async function searchMonster() {
+            const q = document.getElementById('mon_query').value;
+            if(!q) return;
+            const res = await fetch(API_MONSTER + q);
+            const data = await res.json();
+            const div = document.getElementById('mon_results');
+            div.classList.remove('hidden');
+            div.innerHTML = data.results.slice(0, 10).map(m => 
+                `<div onclick='importMonster(${JSON.stringify(m).replace(/'/g, "&#39;")})' class="search-result">${m.name} (CR ${m.challenge_rating})</div>`
+            ).join('');
+        }
+
+        async function importMonster(m) {
+            document.getElementById('m_nom').value = m.name;
+            document.getElementById('m_lvl').value = m.challenge_rating;
+            document.getElementById('m_hp').value = m.hit_points;
+            document.getElementById('m_ac').value = m.armor_class;
+            // Stats
+            document.getElementById('m_str').value = m.strength;
+            document.getElementById('m_dex').value = m.dexterity;
+            document.getElementById('m_con').value = m.constitution;
+            document.getElementById('m_int').value = m.intelligence;
+            document.getElementById('m_wis').value = m.wisdom;
+            document.getElementById('m_cha').value = m.charisma;
+
+            // Import Actions auto
+            if(m.actions) {
+                for(let act of m.actions) {
+                    const dmgMatch = act.desc.match(/(\d+d\d+(\s*\+\s*\d+)?)/);
+                    if(dmgMatch) {
+                        // On crée l'action en DB
+                        const payload = {
+                            nom: `${act.name} (${m.name})`,
+                            formule: dmgMatch[0],
+                            type_action: "attaque",
+                            level: 0,
+                            save_stat: null,
+                            effect_json: null
+                        };
+                        await fetch('/api/action/save', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+                    }
+                }
+                showToast("Actions du monstre importées !");
+                await loadChk('m_act_chk'); // Rafraichir la liste
+            }
+
+            document.getElementById('mon_results').classList.add('hidden');
+            toggleSearch('mon_search_box');
+        }
+
+        // --- LOGIQUE UI STANDARD ---
         function resetForm(p) {
             document.getElementById(p+'_id').value = "";
-            const btnSave = document.getElementById('btn_save_'+p);
-            btnSave.innerText = p==='act'?"Créer":"Sauvegarder";
-            btnSave.classList.remove('bg-yellow-600','hover:bg-yellow-500');
-            btnSave.classList.add(p==='act'?'bg-purple-600':(p==='pj'?'bg-blue-600':'bg-red-600'));
+            const btn = document.getElementById('btn_save_'+p);
+            btn.innerText = p==='act'?"Inscrire le Sort":(p==='pj'?"Enrôler":"Invoquer");
+            btn.classList.remove('bg-yellow-700');
             document.getElementById('btn_cancel_'+p).classList.add('hidden');
-            // Clear inputs (basic)
-            document.querySelectorAll(`#tab-${p==='act'?'actions':(p==='pj'?'pj':'monstre')} input`).forEach(i=>i.type!=='checkbox'?i.value='':i.checked=false);
-            if(p!=='act') renderStats(p); // Reset stats to 10
+            document.querySelectorAll(`#tab-${p==='act'?'actions':(p==='pj'?'pj':'monstre')} input`).forEach(i => i.type!=='checkbox'?i.value='':i.checked=false);
+            if(p!=='act') renderStats(p);
         }
 
         function editMode(p) {
-            const btnSave = document.getElementById('btn_save_'+p);
-            btnSave.innerText = "Modifier";
-            btnSave.classList.remove('bg-purple-600','bg-blue-600','bg-red-600');
-            btnSave.classList.add('bg-yellow-600','hover:bg-yellow-500');
+            const btn = document.getElementById('btn_save_'+p);
+            btn.innerText = "Modifier";
+            btn.classList.add('bg-yellow-700');
             document.getElementById('btn_cancel_'+p).classList.remove('hidden');
         }
 
@@ -196,12 +529,13 @@
             document.getElementById('save_ui').classList.toggle('hidden', document.getElementById('act_type').value!=='save');
             document.getElementById('eff_ui').classList.toggle('hidden', !document.getElementById('has_eff').checked);
         }
+        
         function renderStats(p) {
             const d=document.getElementById(p+'_stats'); if(d.innerHTML.trim()!=='')return;
-            STATS.forEach(s=>d.innerHTML+=`<div class="text-center"><label class="text-[10px] text-gray-500 font-bold uppercase">${s}</label><input type="number" id="${p}_${s}" value="10" class="w-full bg-gray-800 border border-gray-600 rounded text-center text-sm text-white"></div>`);
+            STATS.forEach(s=>d.innerHTML+=`<div class="text-center"><label class="text-[9px] text-gray-500 font-bold uppercase block mb-1">${s}</label><input type="number" id="${p}_${s}" value="10" class="w-full bg-[#111] border border-gray-700 rounded text-center text-sm text-white focus:border-dnd-gold outline-none py-1"></div>`);
         }
 
-        // --- ACTIONS ---
+        // --- API CALLS ACTIONS ---
         async function saveAct() {
             let eff=null; 
             if(document.getElementById('has_eff').checked) eff=JSON.stringify({type:document.getElementById('eff_type').value, target:document.getElementById('eff_tgt').value, val:document.getElementById('eff_val').value, duration:parseInt(document.getElementById('eff_dur').value)||10, conc:document.getElementById('eff_conc').checked});
@@ -212,15 +546,18 @@
                 save_stat: document.getElementById('act_save').value, effect_json: eff
             };
             await fetch('/api/action/save', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
-            resetForm('act'); loadActs();
+            resetForm('act'); showToast("Action enregistrée"); loadActs();
         }
-        
+
         async function loadActs() {
             const d = await (await fetch('/api/action/list')).json();
             document.getElementById('list-act').innerHTML = d.map(a => `
-                <div onclick='editAct(${JSON.stringify(a)})' class="bg-gray-800 p-3 rounded border-l-4 ${a.level>0?'border-purple-500':'border-gray-500'} cursor-pointer hover:bg-gray-700 transition">
-                    <div class="font-bold text-sm text-white">${a.nom}</div>
-                    <div class="text-xs text-gray-400">${a.type_action} • Niv ${a.level}</div>
+                <div onclick='editAct(${JSON.stringify(a)})' class="rpg-panel p-3 cursor-pointer hover:bg-white/5 transition group">
+                    <div class="flex justify-between">
+                        <div class="font-bold text-dnd-gold group-hover:text-white">${a.nom}</div>
+                        <div class="text-[10px] bg-gray-800 px-2 rounded text-gray-400 border border-gray-600">Niv ${a.level}</div>
+                    </div>
+                    <div class="text-xs text-gray-500 mt-1">${a.type_action} • ${a.formule_degats}</div>
                 </div>`).join('');
         }
 
@@ -230,21 +567,14 @@
             document.getElementById('act_dice').value = a.formule_degats;
             document.getElementById('act_lvl').value = a.level;
             document.getElementById('act_type').value = a.type_action;
-            document.getElementById('act_save').value = a.save_stat || 'dex';
-            
+            if(a.save_stat) document.getElementById('act_save').value = a.save_stat;
             const eff = a.effect_json ? JSON.parse(a.effect_json) : null;
             document.getElementById('has_eff').checked = !!eff;
-            if(eff) {
-                document.getElementById('eff_type').value = eff.type;
-                document.getElementById('eff_tgt').value = eff.target;
-                document.getElementById('eff_val').value = eff.val;
-                document.getElementById('eff_dur').value = eff.duration;
-                document.getElementById('eff_conc').checked = eff.conc;
-            }
+            if(eff) { document.getElementById('eff_type').value=eff.type; document.getElementById('eff_val').value=eff.val; }
             uiEff(); editMode('act');
         }
 
-        // --- FIGHTERS ---
+        // --- API CALLS FIGHTERS ---
         async function saveF(type) {
             const p = type==='PJ'?'pj':'m';
             const s={}; STATS.forEach(k=>s[k]=parseInt(document.getElementById(`${p}_${k}`).value)||10);
@@ -257,77 +587,69 @@
                 actions_ids: acts, features: feats, position: document.getElementById(p+'_pos').value, behavior: p==='m'?document.getElementById('m_beh').value:'random'
             };
             await fetch('/api/fighter/save', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
-            resetForm(p); loadList(type, type==='PJ'?'list-pj':'list-m');
+            resetForm(p); showToast(type+" Sauvegardé"); loadList(type, type==='PJ'?'list-pj':'list-m');
         }
 
         async function loadList(type, target) {
             const d = await (await fetch(`/api/fighter/list?type=${type}`)).json();
             const p = type==='PJ'?'pj':'m';
             document.getElementById(target).innerHTML = d.map(f => `
-                <div class="bg-gray-800 p-3 rounded border border-gray-700 hover:border-${type==='PJ'?'blue':'red'}-500 cursor-pointer transition group relative" onclick='editF(${JSON.stringify(f)}, "${p}")'>
-                    <div class="font-bold text-${type==='PJ'?'blue':'red'}-400">${f.nom}</div>
-                    <div class="text-xs text-gray-400">Lvl ${f.niveau} ${f.classe}</div>
-                    <div class="absolute top-2 right-2 text-[10px] bg-gray-900 px-1 rounded border border-gray-600 text-gray-400 group-hover:text-white">EDIT</div>
-                </div>
-            `).join('');
+                <div onclick='editF(${JSON.stringify(f)}, "${p}")' class="rpg-panel p-4 cursor-pointer hover:bg-white/5 transition group relative overflow-hidden">
+                    <div class="absolute top-0 left-0 w-1 h-full ${type==='PJ'?'bg-dnd-blue':'bg-dnd-red'}"></div>
+                    <div class="ml-2">
+                        <div class="font-fantasy text-lg ${type==='PJ'?'text-blue-300':'text-red-300'} group-hover:text-white">${f.nom}</div>
+                        <div class="text-xs text-gray-500 uppercase mt-1 flex gap-2 items-center">
+                            <span class="bg-black/30 px-1 rounded">Niv ${f.niveau}</span>
+                            <span class="text-${type==='PJ'?'green':'orange'}-500 font-bold">HP ${f.hp_max}</span>
+                            <span class="text-gray-400">AC ${f.ac}</span>
+                        </div>
+                    </div>
+                    <i class="fas fa-pen absolute top-4 right-4 text-gray-700 group-hover:text-dnd-gold transition-colors"></i>
+                </div>`).join('');
         }
-        
-        function editF(f, p) {
-            document.getElementById(p+'_id').value = f.id;
-            document.getElementById(p+'_nom').value = f.nom;
-            if(p==='pj') { document.getElementById('pj_cls').value = f.classe; document.getElementById('pj_lvl').value = f.niveau; }
-            else { document.getElementById('m_lvl').value = f.niveau; document.getElementById('m_beh').value = f.behavior; }
-            
-            document.getElementById(p+'_hp').value = f.hp_max;
-            document.getElementById(p+'_ac').value = f.ac;
-            document.getElementById(p+'_pos').value = f.position;
-            
-            STATS.forEach(k => document.getElementById(`${p}_${k}`).value = f.stats[k]);
-            
-            // Reset checks
-            document.querySelectorAll(`#${p}_act_chk input`).forEach(i => i.checked = false);
-            if(f.actions_ids) JSON.parse(f.actions_ids).forEach(id => {
-                const el = document.querySelector(`#${p}_act_chk input[value="${id}"]`);
-                if(el) el.checked = true;
-            });
 
-            if(p==='pj') {
-                document.querySelectorAll('.pj-feat').forEach(i => i.checked = false);
-                if(f.features) JSON.parse(f.features).forEach(feat => {
-                    const el = document.querySelector(`.pj-feat[value="${feat}"]`);
-                    if(el) el.checked = true;
-                });
-            }
+        function editF(f, p) {
+            document.getElementById(p+'_id').value = f.id; document.getElementById(p+'_nom').value = f.nom;
+            if(p==='pj') { document.getElementById('pj_cls').value = f.classe; document.getElementById('pj_lvl').value = f.niveau; } else { document.getElementById('m_lvl').value = f.niveau; }
+            document.getElementById(p+'_hp').value = f.hp_max; document.getElementById(p+'_ac').value = f.ac; document.getElementById(p+'_pos').value = f.position;
+            STATS.forEach(k => document.getElementById(`${p}_${k}`).value = f.stats[k]);
+            document.querySelectorAll(`#${p}_act_chk input`).forEach(i => i.checked = false);
+            if(f.actions_ids) JSON.parse(f.actions_ids).forEach(id => { const el = document.querySelector(`#${p}_act_chk input[value="${id}"]`); if(el) el.checked = true; });
+            if(p==='pj') { document.querySelectorAll('.pj-feat').forEach(i => i.checked = false); if(f.features) JSON.parse(f.features).forEach(ft => { const el = document.querySelector(`.pj-feat[value="${ft}"]`); if(el) el.checked = true; }); }
             editMode(p);
         }
 
         async function loadChk(id) {
             const d = await (await fetch('/api/action/list')).json();
-            document.getElementById(id).innerHTML = d.map(a => `<label class="flex items-center p-1 hover:bg-gray-700 rounded cursor-pointer"><input type="checkbox" value="${a.id}" class="mr-2 rounded bg-gray-900 border-gray-600"><span class="text-xs text-gray-300">${a.nom}</span></label>`).join('');
+            document.getElementById(id).innerHTML = d.map(a => `
+                <label class="flex items-center p-2 hover:bg-white/5 rounded cursor-pointer transition-colors border-b border-gray-800/50">
+                    <input type="checkbox" value="${a.id}" class="form-checkbox text-dnd-gold bg-black border-gray-600 rounded h-3 w-3 mr-2 focus:ring-0">
+                    <div class="flex flex-col"><span class="text-xs font-bold text-gray-300">${a.nom}</span><span class="text-[9px] text-gray-600">${a.formule_degats}</span></div>
+                </label>`).join('');
         }
 
         async function loadSimChk() {
             let d = await (await fetch('/api/fighter/list?type=PJ')).json();
-            document.getElementById('sim_pj').innerHTML = d.map(f=>`<label class="flex items-center p-2 bg-gray-800 rounded mb-1 hover:bg-gray-700 cursor-pointer"><input type="checkbox" value="${f.id}" class="mr-2"><span class="text-sm font-bold text-blue-300">${f.nom}</span></label>`).join('');
+            document.getElementById('sim_pj').innerHTML = d.map(f => `<label class="flex items-center p-3 bg-black/30 border border-gray-800 rounded mb-2 hover:border-dnd-blue cursor-pointer transition-all"><input type="checkbox" value="${f.id}" class="mr-3 text-dnd-blue bg-black border-gray-600 rounded focus:ring-0"><span class="text-sm font-bold text-blue-200">${f.nom}</span></label>`).join('');
             d = await (await fetch('/api/fighter/list?type=MONSTRE')).json();
-            document.getElementById('sim_m').innerHTML = d.map(f=>`<label class="flex items-center p-2 bg-gray-800 rounded mb-1 hover:bg-gray-700 cursor-pointer"><input type="checkbox" value="${f.id}" class="mr-2"><span class="text-sm font-bold text-red-300">${f.nom}</span></label>`).join('');
+            document.getElementById('sim_m').innerHTML = d.map(f => `<label class="flex items-center p-3 bg-black/30 border border-gray-800 rounded mb-2 hover:border-dnd-red cursor-pointer transition-all"><input type="checkbox" value="${f.id}" class="mr-3 text-dnd-red bg-black border-gray-600 rounded focus:ring-0"><span class="text-sm font-bold text-red-200">${f.nom}</span></label>`).join('');
         }
 
         async function runSim() {
+            const btn = document.querySelector('button[onclick="runSim()"]'); btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Simulation en cours...';
             const p = Array.from(document.getElementById('sim_pj').querySelectorAll('input:checked')).map(c=>parseInt(c.value));
             const m = Array.from(document.getElementById('sim_m').querySelectorAll('input:checked')).map(c=>parseInt(c.value));
-            const r = await (await fetch('/api/simulate', {method:'POST',headers:{'Content-Type':'application/json'}, body:JSON.stringify({iterations:parseInt(document.getElementById('iter').value), pj_ids:p, monstre_ids:m})})).json();
-            document.getElementById('res_panel').classList.remove('hidden');
-            document.getElementById('res_win').innerText = r.win_rate.toFixed(1)+'%';
-            document.getElementById('log_area').innerHTML = r.sample_log.map(l=>`<div class="py-1 border-b border-gray-800 text-gray-300">${l}</div>`).join('');
-            if(myChart) myChart.destroy();
-            myChart = new Chart(document.getElementById('dmgChart'), { type:'doughnut', data:{labels:Object.keys(r.dmg_distribution), datasets:[{data:Object.values(r.dmg_distribution), backgroundColor:['#3b82f6','#ef4444','#10b981','#f59e0b'], borderWidth:0}]}, options:{plugins:{legend:{display:false}},responsive:true,maintainAspectRatio:false}});
+            try {
+                const r = await (await fetch('/api/simulate', {method:'POST',headers:{'Content-Type':'application/json'}, body:JSON.stringify({iterations:parseInt(document.getElementById('iter').value), pj_ids:p, monstre_ids:m})})).json();
+                document.getElementById('res_panel').classList.remove('hidden'); document.getElementById('res_win').innerText = r.win_rate.toFixed(1) + '%';
+                document.getElementById('log_area').innerHTML = r.sample_log.map(l => `<div class="py-1 border-b border-gray-800/50 hover:bg-white/5 px-2">${l}</div>`).join('');
+                const ctx = document.getElementById('dmgChart').getContext('2d'); if(myChart) myChart.destroy();
+                myChart = new Chart(ctx, { type: 'doughnut', data: { labels: Object.keys(r.dmg_distribution), datasets: [{ data: Object.values(r.dmg_distribution), backgroundColor: ['#3498db', '#e74c3c', '#2ecc71', '#f1c40f', '#9b59b6'], borderWidth: 0 }] }, options: { plugins: { legend: { display: false } }, responsive: true, maintainAspectRatio: false } });
+                showToast("Simulation Terminée");
+            } catch(e) { showToast("Erreur lors du calcul"); console.error(e); }
+            btn.disabled = false; btn.innerHTML = 'COMBATTRE !';
         }
-
-        // Styles
-        const style = document.createElement('style');
-        style.textContent = `.lbl{display:block;font-size:0.7rem;color:#9ca3af;font-weight:700;text-transform:uppercase;margin-bottom:2px;} .inp{width:100%;background:#111827;border:1px solid #374151;color:white;padding:6px;border-radius:4px;font-size:0.9rem;outline:none;} .inp:focus{border-color:#60a5fa;}`;
-        document.head.appendChild(style);
+        
         nav('tab-actions');
     </script>
 </body>
