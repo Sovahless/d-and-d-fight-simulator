@@ -77,9 +77,16 @@ def get_slots(classe, level):
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+    # Table actions mise à jour avec 'mastery'
     c.execute('''CREATE TABLE IF NOT EXISTS actions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT, formule_degats TEXT, type_action TEXT, level INTEGER, save_stat TEXT, effect_json TEXT
+        id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT, formule_degats TEXT, type_action TEXT, level INTEGER, save_stat TEXT, effect_json TEXT, mastery TEXT
     )''')
+    # MIGRATION AUTOMATIQUE : On tente d'ajouter la colonne si elle manque
+    try:
+        c.execute("ALTER TABLE actions ADD COLUMN mastery TEXT")
+    except:
+        pass # La colonne existe déjà, tout va bien
+
     c.execute('''CREATE TABLE IF NOT EXISTS combattants (
         id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT, type_entite TEXT, classe TEXT, niveau INTEGER,
         force INTEGER, dexterite INTEGER, constitution INTEGER, intelligence INTEGER, sagesse INTEGER, charisme INTEGER,
@@ -91,7 +98,13 @@ init_db()
 # --- MODELES ---
 class ActionModel(BaseModel):
     id: Optional[int] = None
-    nom: str; formule: str; type_action: str; level: int = 0; save_stat: Optional[str] = None; effect_json: Optional[str] = None
+    nom: str
+    formule: str
+    type_action: str
+    level: int = 0
+    save_stat: Optional[str] = None
+    effect_json: Optional[str] = None
+    mastery: Optional[str] = None  # Nouveau champ pour maîtrise / spécialisation
 
 class FighterModel(BaseModel):
     id: Optional[int] = None
@@ -107,7 +120,7 @@ class EntiteCombat:
     __slots__ = ('id', 'nom', 'team', 'classe', 'lvl', 'stats', 'mods', 'hp', 'hp_max', 'base_ac', 
                  'actions', 'feats', 'position', 'behavior', 'prof', 'slots', 'effects', 
                  'concentrating_on', 'init_bonus', 'total_dmg_done', 'init', 'use_gwm', 
-                 'nb_attacks', 'state', 'death_saves_success', 'death_saves_fail')
+                 'nb_attacks', 'state', 'death_saves_success', 'death_saves_fail', 'vex_target_id')
 
     def __init__(self, data, actions_map):
         self.id = data['id']; self.nom = data['nom']; self.team = data['type_entite']
@@ -152,6 +165,9 @@ class EntiteCombat:
         self.death_saves_success = 0
         self.death_saves_fail = 0
         self.state = 'alive' # 'alive', 'downed', 'dead'
+
+        # --- VEX TARGET (maîtrise) ---
+        self.vex_target_id = None
 
         # --- CORRECTION 2A : CALCUL EXTRA ATTACK ---
         self.nb_attacks = 1
@@ -363,35 +379,69 @@ def simuler_bataille(args):
                         iter_attaques = actor.nb_attacks if action['type_action'] == 'attaque' else 1
                         for i in range(iter_attaques):
                             if t.hp <= 0: break
+
+                            # --- LOGIQUE D&D 2024 ---
+                            # Gestion VEX (Avantage si la cible est marquée par Vex lors d'une attaque précédente)
+                            vex_active = getattr(actor, 'vex_target_id', None) == t.id
+
                             has_adv = False
                             has_dis = False
                             if actor.position == 'front':
                                 if t.has_condition('prone'): has_adv = True
                                 if "Reckless Attack" in actor.feats: has_adv = True
                                 if t.has_condition('blinded'): has_adv = True
+                                if vex_active: has_adv = True # VEX donne l'avantage
+
                             if actor.has_condition('blinded'): has_dis = True
+                            
                             adv = 0
                             if has_adv and not has_dis: adv = 1
                             elif has_dis and not has_adv: adv = -1
+                            
+                            # Consommation du Vex après le jet (qu'il touche ou non, l'avantage est utilisé pour ce jet)
+                            if vex_active: actor.vex_target_id = None
+
                             att = max(actor.mods.values()) + actor.prof
                             if actor.use_gwm: att -= 5
                             for e in actor.effects:
                                 if e['type'] == 'buff_atk': att += e['val']
+                                
                             d20, has_adv_bool = roll_d20_fast(adv)
                             crit = (d20 == 20)
+                            
                             if crit or (d20 + att >= t.ac):
+                                # --- TOUCHÉ ---
                                 hit = True
                                 dmg = roll_fast(action['parsed_dice'])
                                 if crit:
                                     n, f, _ = action['parsed_dice']
                                     dmg += roll_fast((n, f, 0))
-                                if log_enabled: msg(f"⚔️ {actor.nom} crit! Dégâts totaux: {dmg}")
+                                
+                                if log_enabled: msg(f"⚔️ {actor.nom} touche ({d20}+{att}) ! Dégâts: {dmg}")
                                 t.hp -= dmg
                                 actor.total_dmg_done += dmg
+                                
+                                # MAITRISE: VEX (Si on touche et fait des dégâts, prochaine attaque a l'avantage)
+                                if action.get('mastery') == 'Vex':
+                                    actor.vex_target_id = t.id
+                                    if log_enabled: msg(f"   ✨ Vex ! {actor.nom} aura l'avantage au prochain coup.")
+
                                 if t.check_concentration(dmg) and log_enabled: msg(f"⚠️ {t.nom} perd conc.")
                                 if eff and eff.get('target')=='enemy':
                                     t.effects.append({'type':eff['type'], 'duration':eff.get('duration',1), 'val':0})
-                            elif log_enabled: msg(f"💨 {actor.nom} manque ({d20}+{att}).")
+                                    
+                            else:
+                                # --- RATÉ ---
+                                if log_enabled: msg(f"💨 {actor.nom} manque ({d20}+{att}).")
+                                
+                                # MAITRISE: GRAZE (Dégâts même si on rate)
+                                if action.get('mastery') == 'Graze':
+                                    # Le modificateur utilisé est généralement le plus haut (simplifié ici)
+                                    mod_dmg = max(actor.mods.values()) 
+                                    if mod_dmg > 0:
+                                        t.hp -= mod_dmg
+                                        actor.total_dmg_done += mod_dmg
+                                        if log_enabled: msg(f"   🩸 Graze ! L'éraflure inflige tout de même {mod_dmg} dégâts.")
                 # Check mort APRÈS la boucle d'attaques (ligne 169 originale)
                 if t.hp <= 0 and t.state == 'alive':
                     # Si c'est un monstre, on le tue définitivement pour éviter qu'il soit soigné
@@ -471,11 +521,11 @@ def process_parallel(payload):
 def save_action(a: ActionModel):
     conn = sqlite3.connect(DB_NAME)
     if a.id:
-        conn.execute("UPDATE actions SET nom=?, formule_degats=?, type_action=?, level=?, save_stat=?, effect_json=? WHERE id=?",
-                     (a.nom, a.formule, a.type_action, a.level, a.save_stat, a.effect_json, a.id))
+        conn.execute("UPDATE actions SET nom=?, formule_degats=?, type_action=?, level=?, save_stat=?, effect_json=?, mastery=? WHERE id=?",
+                     (a.nom, a.formule, a.type_action, a.level, a.save_stat, a.effect_json, a.mastery, a.id))
     else:
-        conn.execute("INSERT INTO actions (nom, formule_degats, type_action, level, save_stat, effect_json) VALUES (?,?,?,?,?,?)",
-                     (a.nom, a.formule, a.type_action, a.level, a.save_stat, a.effect_json))
+        conn.execute("INSERT INTO actions (nom, formule_degats, type_action, level, save_stat, effect_json, mastery) VALUES (?,?,?,?,?,?,?)",
+                     (a.nom, a.formule, a.type_action, a.level, a.save_stat, a.effect_json, a.mastery))
     conn.commit(); conn.close(); return "ok"
 
 @app.post("/api/fighter/save")

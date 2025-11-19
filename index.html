@@ -143,6 +143,16 @@
                             <label class="text-xs font-bold text-dnd-gold uppercase tracking-wider">Nom de l'Action</label>
                             <input id="act_nom" class="rpg-input w-full p-2 rounded text-lg font-bold text-white placeholder-gray-700" placeholder="Ex: Épée Longue">
                         </div>
+                        <div>
+                            <label class="text-xs font-bold text-gray-400 uppercase">Maîtrise (Mastery)</label>
+                            <select id="act_mastery" class="rpg-input w-full p-2 rounded text-sm">
+                                <option value="">(Aucune)</option>
+                                <option value="Graze">Graze</option>
+                                <option value="Vex">Vex</option>
+                                <option value="Nick">Nick</option>
+                                <option value="Topple">Topple</option>
+                            </select>
+                        </div>
                         <div class="grid grid-cols-2 gap-4">
                             <div>
                                 <label class="text-xs font-bold text-gray-400 uppercase">Niveau (0=Atk)</label>
@@ -543,7 +553,8 @@
                 id: document.getElementById('act_id').value || null,
                 nom: document.getElementById('act_nom').value, formule: document.getElementById('act_dice').value,
                 type_action: document.getElementById('act_type').value, level: parseInt(document.getElementById('act_lvl').value)||0,
-                save_stat: document.getElementById('act_save').value, effect_json: eff
+                save_stat: document.getElementById('act_save').value, effect_json: eff,
+                mastery: document.getElementById('act_mastery').value || null
             };
             await fetch('/api/action/save', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
             resetForm('act'); showToast("Action enregistrée"); loadActs();
@@ -568,6 +579,8 @@
             document.getElementById('act_lvl').value = a.level;
             document.getElementById('act_type').value = a.type_action;
             if(a.save_stat) document.getElementById('act_save').value = a.save_stat;
+            // Charger la maîtrise si présente
+            try { document.getElementById('act_mastery').value = a.mastery || ""; } catch(e){}
             const eff = a.effect_json ? JSON.parse(a.effect_json) : null;
             document.getElementById('has_eff').checked = !!eff;
             if(eff) { document.getElementById('eff_type').value=eff.type; document.getElementById('eff_val').value=eff.val; }
