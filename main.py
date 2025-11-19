@@ -148,6 +148,15 @@ class EntiteCombat:
         self.init = 0
         self.use_gwm = False
 
+        # --- CORRECTION 2A : CALCUL EXTRA ATTACK ---
+        self.nb_attacks = 1
+        # Note : Le Moine n'est pas dans votre liste HTML mais devrait y être.
+        martial_classes = ["Guerrier", "Barbare", "Paladin", "Rôdeur", "Moine"] 
+        if self.classe in martial_classes and self.lvl >= 5:
+            self.nb_attacks = 2
+        if self.classe == "Guerrier" and self.lvl >= 11: # Le Guerrier a une 3ème attaque
+            self.nb_attacks = 3
+
     @property
     def ac(self):
         # Optimisation : generator expression rapide
@@ -227,6 +236,11 @@ def simuler_bataille(args):
         for e in tous: 
             e.init = random.randint(1,20) + e.init_bonus
         tous.sort(key=lambda x: x.init, reverse=True)
+
+        while any(p.hp > 0 for p in pj) and any(m.hp > 0 for m in mon):
+            rounds += 1
+            if rounds > 20: break
+            if log_enabled: msg(f"--- TOUR {rounds} ---")
         
         # Pre-calc averages
         ac_pj = sum(p.ac for p in pj)/len(pj) if pj else 10
@@ -289,32 +303,58 @@ def simuler_bataille(args):
                         dmg = roll_fast(action['parsed_dice'])
                         if log_enabled: msg(f"🔥 {target.nom} rate save vs {action['nom']}.")
                 else:
-                    # Attack Roll
-                    att = max(actor.mods.values()) + actor.prof
-                    if actor.use_gwm: att -= 5
-                    # Add Buffs
-                    for e in actor.effects:
-                        if e['type'] == 'buff_atk': att += e['val']
+                    # --- CORRECTION 2B : BOUCLE D'ATTAQUES ---
+                    # On attaque plusieurs fois seulement si c'est une action "attaque" (pas un sort de save)
+                    iter_attaques = actor.nb_attacks if action['type_action'] == 'attaque' else 1
                     
-                    d20, _ = roll_d20_fast(adv)
-                    crit = (d20 == 20)
-                    if crit or (d20 + att >= target.ac):
-                        hit = True
-                        base_dmg = roll_fast(action['parsed_dice'])
-                        stat_bonus = max(actor.mods.values())
-                        dmg = base_dmg + stat_bonus + (10 if actor.use_gwm else 0)
-                        if crit: dmg += roll_fast(action['parsed_dice']) # Crit adds dice only
-                        if log_enabled: msg(f"⚔️ {actor.nom} touche {target.nom} ({d20}+{att}). Dmg: {dmg}")
-                    elif log_enabled: msg(f"💨 {actor.nom} manque ({d20}+{att}).")
+                    for i in range(iter_attaques):
+                        if target.hp <= 0: break # On arrête si la cible est déjà morte
+                        
+                        # --- CORRECTION 3 : GESTION FINE AVANTAGE / CONDITIONS ---
+                        has_adv = False
+                        has_dis = False
 
-                if hit and dmg > 0:
-                    target.hp -= dmg
-                    actor.total_dmg_done += dmg
-                    if target.check_concentration(dmg) and log_enabled: msg(f"⚠️ {target.nom} perd conc.")
-                    # Apply Debuff
-                    if eff and eff.get('target')=='enemy':
-                         target.effects.append({'type':eff['type'], 'duration':eff.get('duration',1), 'val':0})
+                        # Sources d'Avantage
+                        if actor.position == 'front':
+                            if target.has_condition('prone'): has_adv = True
+                            if "Reckless Attack" in actor.feats: has_adv = True
+                            if target.has_condition('blinded'): has_adv = True # Cible aveuglée = Avantage pour nous
 
+                        # Sources de Désavantage
+                        if actor.has_condition('blinded'): has_dis = True # On est aveuglé = Désavantage
+
+                        # Résolution (Les deux s'annulent)
+                        adv = 0
+                        if has_adv and not has_dis: adv = 1
+                        elif has_dis and not has_adv: adv = -1
+                        
+                        # Attack Roll
+                        att = max(actor.mods.values()) + actor.prof
+                        if actor.use_gwm: att -= 5
+                        # Add Buffs
+                        for e in actor.effects:
+                            if e['type'] == 'buff_atk': att += e['val']
+                        
+                        d20, has_adv_bool = roll_d20_fast(adv) # Note: j'utilise 'adv' calculé au point 3
+                        crit = (d20 == 20)
+                        
+                        if crit or (d20 + att >= target.ac):
+                            hit = True
+                            base_dmg = roll_fast(action['parsed_dice'])
+                            stat_bonus = max(actor.mods.values())
+                            dmg = base_dmg + stat_bonus + (10 if actor.use_gwm else 0)
+                            if crit: dmg += roll_fast(action['parsed_dice'])
+                            if log_enabled: msg(f"⚔️ {actor.nom} touche {target.nom} ({d20}+{att}). Dmg: {dmg}")
+                            
+                            # Application des dégâts
+                            target.hp -= dmg
+                            actor.total_dmg_done += dmg
+                            if target.check_concentration(dmg) and log_enabled: msg(f"⚠️ {target.nom} perd conc.")
+                            if eff and eff.get('target')=='enemy':
+                                target.effects.append({'type':eff['type'], 'duration':eff.get('duration',1), 'val':0})
+                        elif log_enabled: msg(f"💨 {actor.nom} manque ({d20}+{att}).")
+
+            # Check mort APRÈS la boucle d'attaques (ligne 169 originale)
             if target.hp <= 0 and log_enabled: msg(f"💀 {target.nom} meurt.")
 
     # Return stats
