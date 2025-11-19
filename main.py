@@ -106,7 +106,8 @@ class EntiteCombat:
     # OPTIMISATION __slots__ : Réduit drastiquement l'empreinte mémoire et accélère l'accès aux attributs
     __slots__ = ('id', 'nom', 'team', 'classe', 'lvl', 'stats', 'mods', 'hp', 'hp_max', 'base_ac', 
                  'actions', 'feats', 'position', 'behavior', 'prof', 'slots', 'effects', 
-                 'concentrating_on', 'init_bonus', 'total_dmg_done', 'init', 'use_gwm')
+                 'concentrating_on', 'init_bonus', 'total_dmg_done', 'init', 'use_gwm', 
+                 'nb_attacks', 'state', 'death_saves_success', 'death_saves_fail')
 
     def __init__(self, data, actions_map):
         self.id = data['id']; self.nom = data['nom']; self.team = data['type_entite']
@@ -147,6 +148,10 @@ class EntiteCombat:
         self.effects = []; self.concentrating_on = None; self.init_bonus = self.mods['dex']; self.total_dmg_done = 0
         self.init = 0
         self.use_gwm = False
+        # --- MORTS & DEATH SAVES ---
+        self.death_saves_success = 0
+        self.death_saves_fail = 0
+        self.state = 'alive' # 'alive', 'downed', 'dead'
 
         # --- CORRECTION 2A : CALCUL EXTRA ATTACK ---
         self.nb_attacks = 1
@@ -180,6 +185,27 @@ class EntiteCombat:
     def start_turn(self):
         # List comprehension est plus rapide que boucle remove
         self.effects = [e for e in self.effects if (e.update({'duration': e['duration']-1}) or True) and e['duration'] >= 0]
+        # --- DEATH SAVES ---
+        if self.state == 'downed':
+            d20 = random.randint(1, 20)
+            if d20 == 20:
+                self.state = 'alive'
+                self.hp = 1
+                self.death_saves_success = 0
+                self.death_saves_fail = 0
+            elif d20 == 1:
+                self.death_saves_fail += 2
+            elif d20 >= 10:
+                self.death_saves_success += 1
+            else:
+                self.death_saves_fail += 1
+            # Stable
+            if self.death_saves_success >= 3:
+                self.state = 'stable'
+            # Mort définitive
+            if self.death_saves_fail >= 3:
+                self.state = 'dead'
+                self.hp = -1
 
     def has_condition(self, c):
         for e in self.effects:
@@ -264,98 +290,107 @@ def simuler_bataille(args):
             fronts = [e for e in active_targets if e.position == 'front']
             valid = fronts if (actor.position=='front' and fronts) else active_targets
             
+            # Sélection de la cible principale
             target = actor.choisir_cible(valid)
             if not target: continue
 
+            # Choix de l'action
             action = actor.choisir_action(ac_m if is_pj else ac_pj)
             if not action: continue
 
-            # Pay Slot
+            # --- LOGIQUE AOE ---
+            targets_list = [target] # Par défaut, une seule cible
+            eff = action.get('parsed_effect')
+            if eff and eff.get('aoe'):
+                targets_list = [e for e in active_targets]
+                if log_enabled: msg(f"💥 {actor.nom} lance {action['nom']} sur {len(targets_list)} cibles !")
+
+            # Pay Slot (une seule fois)
             if action['level'] > 0 and is_pj:
                 actor.slots[min(4, action['level']-1)] -= 1
 
-            eff = action['parsed_effect']
-
-            # --- RESOLUTION ---
-            if action['type_action'] == 'soin':
-                heal = roll_fast(action['parsed_dice'])
-                actor.hp = min(actor.hp+heal, actor.hp_max)
-                if log_enabled: msg(f"💚 {actor.nom} soigne {heal}.")
-                if eff and eff['type'].startswith('buff'):
-                    val_roll = roll_fast(eff['parsed_val'])
-                    actor.effects.append({'type':eff['type'], 'val':val_roll, 'duration':eff.get('duration',10), 'conc':eff.get('conc',False)})
-                    if eff.get('conc'): actor.concentrating_on = True
-            
-            else:
-                # Determine Advantage
-                adv = 0
-                if actor.position == 'front':
-                    if target.has_condition('prone'): adv = 1
-                    if "Reckless Attack" in actor.feats: adv = 1
-                
-                hit = False; dmg = 0; crit = False
-                
-                if action['type_action'] == 'save':
-                    dc = 8 + actor.prof + actor.mods.get(action.get('save_stat','int'), 0)
-                    sv, _ = roll_d20_fast(0)
-                    if (sv + target.get_save_mod(action['save_stat'])) < dc:
-                        hit = True
-                        dmg = roll_fast(action['parsed_dice'])
-                        if log_enabled: msg(f"🔥 {target.nom} rate save vs {action['nom']}.")
+            # --- RÉSOLUTION POUR CHAQUE CIBLE ---
+            for t in targets_list:
+                if t.state == 'dead': continue
+                if t.hp <= 0 and t.state != 'downed':
+                    t.hp = 0
+                    t.state = 'downed'
+                    if log_enabled: msg(f"☠️ {t.nom} tombe à terre (downed) !")
+                if t.state == 'downed' or t.state == 'stable':
+                    # Seul le soin peut relever
+                    if action['type_action'] == 'soin':
+                        heal = roll_fast(action['parsed_dice'])
+                        t.hp = min(t.hp+heal, t.hp_max)
+                        t.state = 'alive'
+                        t.death_saves_success = 0
+                        t.death_saves_fail = 0
+                        if log_enabled: msg(f"💚 {actor.nom} relève {t.nom} avec {heal} PV !")
+                        if eff and eff['type'].startswith('buff'):
+                            val_roll = roll_fast(eff['parsed_val'])
+                            t.effects.append({'type':eff['type'], 'val':val_roll, 'duration':eff.get('duration',10), 'conc':eff.get('conc',False)})
+                            if eff.get('conc'): t.concentrating_on = True
+                    continue
+                if action['type_action'] == 'soin':
+                    heal = roll_fast(action['parsed_dice'])
+                    actor.hp = min(actor.hp+heal, actor.hp_max)
+                    if log_enabled: msg(f"💚 {actor.nom} soigne {heal}.")
+                    if eff and eff['type'].startswith('buff'):
+                        val_roll = roll_fast(eff['parsed_val'])
+                        actor.effects.append({'type':eff['type'], 'val':val_roll, 'duration':eff.get('duration',10), 'conc':eff.get('conc',False)})
+                        if eff.get('conc'): actor.concentrating_on = True
                 else:
-                    # --- CORRECTION 2B : BOUCLE D'ATTAQUES ---
-                    # On attaque plusieurs fois seulement si c'est une action "attaque" (pas un sort de save)
-                    iter_attaques = actor.nb_attacks if action['type_action'] == 'attaque' else 1
-                    
-                    for i in range(iter_attaques):
-                        if target.hp <= 0: break # On arrête si la cible est déjà morte
-                        
-                        # --- CORRECTION 3 : GESTION FINE AVANTAGE / CONDITIONS ---
-                        has_adv = False
-                        has_dis = False
-
-                        # Sources d'Avantage
-                        if actor.position == 'front':
-                            if target.has_condition('prone'): has_adv = True
-                            if "Reckless Attack" in actor.feats: has_adv = True
-                            if target.has_condition('blinded'): has_adv = True # Cible aveuglée = Avantage pour nous
-
-                        # Sources de Désavantage
-                        if actor.has_condition('blinded'): has_dis = True # On est aveuglé = Désavantage
-
-                        # Résolution (Les deux s'annulent)
-                        adv = 0
-                        if has_adv and not has_dis: adv = 1
-                        elif has_dis and not has_adv: adv = -1
-                        
-                        # Attack Roll
-                        att = max(actor.mods.values()) + actor.prof
-                        if actor.use_gwm: att -= 5
-                        # Add Buffs
-                        for e in actor.effects:
-                            if e['type'] == 'buff_atk': att += e['val']
-                        
-                        d20, has_adv_bool = roll_d20_fast(adv) # Note: j'utilise 'adv' calculé au point 3
-                        crit = (d20 == 20)
-                        
-                        if crit or (d20 + att >= target.ac):
+                    adv = 0
+                    if actor.position == 'front':
+                        if t.has_condition('prone'): adv = 1
+                        if "Reckless Attack" in actor.feats: adv = 1
+                    hit = False; dmg = 0; crit = False
+                    if action['type_action'] == 'save':
+                        dc = 8 + actor.prof + actor.mods.get(action.get('save_stat','int'), 0)
+                        sv, _ = roll_d20_fast(0)
+                        if (sv + t.get_save_mod(action['save_stat'])) < dc:
                             hit = True
-                            base_dmg = roll_fast(action['parsed_dice'])
-                            stat_bonus = max(actor.mods.values())
-                            dmg = base_dmg + stat_bonus + (10 if actor.use_gwm else 0)
-                            if crit: dmg += roll_fast(action['parsed_dice'])
-                            if log_enabled: msg(f"⚔️ {actor.nom} touche {target.nom} ({d20}+{att}). Dmg: {dmg}")
-                            
-                            # Application des dégâts
-                            target.hp -= dmg
-                            actor.total_dmg_done += dmg
-                            if target.check_concentration(dmg) and log_enabled: msg(f"⚠️ {target.nom} perd conc.")
-                            if eff and eff.get('target')=='enemy':
-                                target.effects.append({'type':eff['type'], 'duration':eff.get('duration',1), 'val':0})
-                        elif log_enabled: msg(f"💨 {actor.nom} manque ({d20}+{att}).")
-
-            # Check mort APRÈS la boucle d'attaques (ligne 169 originale)
-            if target.hp <= 0 and log_enabled: msg(f"💀 {target.nom} meurt.")
+                            dmg = roll_fast(action['parsed_dice'])
+                            if log_enabled: msg(f"🔥 {t.nom} rate save vs {action['nom']}.")
+                    else:
+                        iter_attaques = actor.nb_attacks if action['type_action'] == 'attaque' else 1
+                        for i in range(iter_attaques):
+                            if t.hp <= 0: break
+                            has_adv = False
+                            has_dis = False
+                            if actor.position == 'front':
+                                if t.has_condition('prone'): has_adv = True
+                                if "Reckless Attack" in actor.feats: has_adv = True
+                                if t.has_condition('blinded'): has_adv = True
+                            if actor.has_condition('blinded'): has_dis = True
+                            adv = 0
+                            if has_adv and not has_dis: adv = 1
+                            elif has_dis and not has_adv: adv = -1
+                            att = max(actor.mods.values()) + actor.prof
+                            if actor.use_gwm: att -= 5
+                            for e in actor.effects:
+                                if e['type'] == 'buff_atk': att += e['val']
+                            d20, has_adv_bool = roll_d20_fast(adv)
+                            crit = (d20 == 20)
+                            if crit or (d20 + att >= t.ac):
+                                hit = True
+                                dmg = roll_fast(action['parsed_dice'])
+                                if crit:
+                                    n, f, _ = action['parsed_dice']
+                                    dmg += roll_fast((n, f, 0))
+                                if log_enabled: msg(f"⚔️ {actor.nom} crit! Dégâts totaux: {dmg}")
+                                t.hp -= dmg
+                                actor.total_dmg_done += dmg
+                                if t.check_concentration(dmg) and log_enabled: msg(f"⚠️ {t.nom} perd conc.")
+                                if eff and eff.get('target')=='enemy':
+                                    t.effects.append({'type':eff['type'], 'duration':eff.get('duration',1), 'val':0})
+                            elif log_enabled: msg(f"💨 {actor.nom} manque ({d20}+{att}).")
+                # Check mort APRÈS la boucle d'attaques (ligne 169 originale)
+                if t.hp <= 0 and t.state == 'alive':
+                    t.hp = 0
+                    t.state = 'downed'
+                    if log_enabled: msg(f"☠️ {t.nom} tombe à terre (downed) !")
+                if t.state == 'dead' and log_enabled:
+                    msg(f"💀 {t.nom} meurt définitivement.")
 
     # Return stats
     return {
@@ -369,42 +404,43 @@ def simuler_bataille(args):
 def process_parallel(payload):
     # Lecture DB Optimisée (Dict Lookup)
     conn = sqlite3.connect(DB_NAME); conn.row_factory=sqlite3.Row
-    
-    # On charge les actions dans un Dictionnaire {id: action} pour accès O(1)
+    # On charge les actions
     actions_list = [dict(r) for r in conn.execute("SELECT * FROM actions").fetchall()]
     act_map = {a['id']: a for a in actions_list}
-    
-    # Lecture Combattants
-    pjs = [dict(r) for r in conn.execute(f"SELECT * FROM combattants WHERE id IN ({','.join('?'*len(payload.pj_ids))})", payload.pj_ids).fetchall()] if payload.pj_ids else []
-    ms = [dict(r) for r in conn.execute(f"SELECT * FROM combattants WHERE id IN ({','.join('?'*len(payload.monstre_ids))})", payload.monstre_ids).fetchall()] if payload.monstre_ids else []
+    # --- MODIFICATION GESTION QUANTITÉS ---
+    # 1. Récupérer les données UNIQUES depuis la DB pour éviter les doublons SQL
+    unique_pj_ids = list(set(payload.pj_ids))
+    unique_mon_ids = list(set(payload.monstre_ids))
+    pj_rows = []
+    if unique_pj_ids:
+        pj_rows = [dict(r) for r in conn.execute(f"SELECT * FROM combattants WHERE id IN ({','.join('?'*len(unique_pj_ids))})", unique_pj_ids).fetchall()]
+    mon_rows = []
+    if unique_mon_ids:
+        mon_rows = [dict(r) for r in conn.execute(f"SELECT * FROM combattants WHERE id IN ({','.join('?'*len(unique_mon_ids))})", unique_mon_ids).fetchall()]
     conn.close()
-    
+    # 2. Créer un dictionnaire pour accès rapide {id: data}
+    pj_map = {row['id']: row for row in pj_rows}
+    mon_map = {row['id']: row for row in mon_rows}
+    # 3. Reconstruire la liste complète avec les DUPLICATIONS demandées par le frontend
+    pjs = [pj_map[i] for i in payload.pj_ids if i in pj_map]
+    ms = [mon_map[i] for i in payload.monstre_ids if i in mon_map]
+    # --- FIN MODIFICATION ---
     if not pjs or not ms: return {"error":"Vide"}
-    
-    # 1. Sample Run (Avec Logs)
+    # Le reste de la fonction reste identique...
     sample = simuler_bataille((pjs, ms, act_map, True))
-    
-    # 2. Bulk Run (Sans Logs)
-    # Note: Sur Windows, assurez-vous que ce code est dans un block if __name__ == "__main__" si script direct
-    # Mais via FastAPI/Uvicorn c'est géré par le spawn des process
     with ProcessPoolExecutor() as exc:
-        # On envoie act_map (dict) qui est picklable et rapide à lire
         results = list(exc.map(simuler_bataille, [(pjs, ms, act_map, False)] * (payload.iterations - 1)))
-    
     results.append(sample)
-    
     # Aggregation
     total_dmg = {}
     wins = 0
     tot_rounds = 0
-    
     for r in results:
         if r['victoire_pj']: wins += 1
         tot_rounds += r['rounds']
         if 'dmg' in r:
             for k, v in r['dmg'].items():
                 total_dmg[k] = total_dmg.get(k, 0) + v
-
     N = payload.iterations
     return {
         "win_rate": (wins / N) * 100,

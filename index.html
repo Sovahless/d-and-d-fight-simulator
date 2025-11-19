@@ -629,25 +629,69 @@
         }
 
         async function loadSimChk() {
+            // Chargement des PJ (On garde la logique simple pour eux, généralement uniques)
             let d = await (await fetch('/api/fighter/list?type=PJ')).json();
-            document.getElementById('sim_pj').innerHTML = d.map(f => `<label class="flex items-center p-3 bg-black/30 border border-gray-800 rounded mb-2 hover:border-dnd-blue cursor-pointer transition-all"><input type="checkbox" value="${f.id}" class="mr-3 text-dnd-blue bg-black border-gray-600 rounded focus:ring-0"><span class="text-sm font-bold text-blue-200">${f.nom}</span></label>`).join('');
+            document.getElementById('sim_pj').innerHTML = d.map(f => `
+                <label class="flex items-center p-3 bg-black/30 border border-gray-800 rounded mb-2 hover:border-dnd-blue cursor-pointer transition-all">
+                    <input type="checkbox" value="${f.id}" class="mr-3 text-dnd-blue bg-black border-gray-600 rounded focus:ring-0">
+                    <span class="text-sm font-bold text-blue-200">${f.nom}</span>
+                </label>`).join('');
+
+            // Chargement des Monstres (AVEC QUANTITÉ)
             d = await (await fetch('/api/fighter/list?type=MONSTRE')).json();
-            document.getElementById('sim_m').innerHTML = d.map(f => `<label class="flex items-center p-3 bg-black/30 border border-gray-800 rounded mb-2 hover:border-dnd-red cursor-pointer transition-all"><input type="checkbox" value="${f.id}" class="mr-3 text-dnd-red bg-black border-gray-600 rounded focus:ring-0"><span class="text-sm font-bold text-red-200">${f.nom}</span></label>`).join('');
+            document.getElementById('sim_m').innerHTML = d.map(f => `
+                <div class="flex items-center p-3 bg-black/30 border border-gray-800 rounded mb-2 hover:border-dnd-red transition-all">
+                    <label class="flex items-center flex-1 cursor-pointer">
+                        <input type="checkbox" value="${f.id}" class="mon-check mr-3 text-dnd-red bg-black border-gray-600 rounded focus:ring-0">
+                        <span class="text-sm font-bold text-red-200">${f.nom}</span>
+                    </label>
+                    <input type="number" min="1" value="1" class="mon-qty w-16 bg-[#0b0c10] border border-gray-700 rounded text-center text-white text-sm p-1 focus:border-dnd-red outline-none" onclick="event.stopPropagation()">
+                    <span class="text-xs text-gray-500 ml-2">Qté</span>
+                </div>`).join('');
         }
 
         async function runSim() {
-            const btn = document.querySelector('button[onclick="runSim()"]'); btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Simulation en cours...';
+            const btn = document.querySelector('button[onclick="runSim()"]'); 
+            btn.disabled = true; 
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Simulation en cours...';
+            // Récupération des IDs PJ (Simple)
             const p = Array.from(document.getElementById('sim_pj').querySelectorAll('input:checked')).map(c=>parseInt(c.value));
-            const m = Array.from(document.getElementById('sim_m').querySelectorAll('input:checked')).map(c=>parseInt(c.value));
+            // Récupération des IDs Monstres (Avec boucle de quantité)
+            const m = [];
+            document.querySelectorAll('#sim_m .mon-check:checked').forEach(chk => {
+                const id = parseInt(chk.value);
+                // On cherche l'input de quantité qui est dans le même conteneur parent
+                const qtyInput = chk.closest('div').querySelector('.mon-qty');
+                const qty = parseInt(qtyInput.value) || 1;
+                // On ajoute l'ID autant de fois que la quantité demandée
+                for(let i=0; i < qty; i++) {
+                    m.push(id);
+                }
+            });
             try {
-                const r = await (await fetch('/api/simulate', {method:'POST',headers:{'Content-Type':'application/json'}, body:JSON.stringify({iterations:parseInt(document.getElementById('iter').value), pj_ids:p, monstre_ids:m})})).json();
-                document.getElementById('res_panel').classList.remove('hidden'); document.getElementById('res_win').innerText = r.win_rate.toFixed(1) + '%';
+                const r = await (await fetch('/api/simulate', {
+                    method:'POST',
+                    headers:{'Content-Type':'application/json'}, 
+                    body:JSON.stringify({
+                        iterations:parseInt(document.getElementById('iter').value), 
+                        pj_ids:p, 
+                        monstre_ids:m
+                    })
+                })).json();
+                // ... Reste du code inchangé pour l'affichage ...
+                document.getElementById('res_panel').classList.remove('hidden'); 
+                document.getElementById('res_win').innerText = r.win_rate.toFixed(1) + '%';
                 document.getElementById('log_area').innerHTML = r.sample_log.map(l => `<div class="py-1 border-b border-gray-800/50 hover:bg-white/5 px-2">${l}</div>`).join('');
-                const ctx = document.getElementById('dmgChart').getContext('2d'); if(myChart) myChart.destroy();
+                const ctx = document.getElementById('dmgChart').getContext('2d'); 
+                if(myChart) myChart.destroy();
                 myChart = new Chart(ctx, { type: 'doughnut', data: { labels: Object.keys(r.dmg_distribution), datasets: [{ data: Object.values(r.dmg_distribution), backgroundColor: ['#3498db', '#e74c3c', '#2ecc71', '#f1c40f', '#9b59b6'], borderWidth: 0 }] }, options: { plugins: { legend: { display: false } }, responsive: true, maintainAspectRatio: false } });
                 showToast("Simulation Terminée");
-            } catch(e) { showToast("Erreur lors du calcul"); console.error(e); }
-            btn.disabled = false; btn.innerHTML = 'COMBATTRE !';
+            } catch(e) { 
+                showToast("Erreur lors du calcul"); 
+                console.error(e); 
+            }
+            btn.disabled = false; 
+            btn.innerHTML = 'COMBATTRE !';
         }
         
         nav('tab-actions');
